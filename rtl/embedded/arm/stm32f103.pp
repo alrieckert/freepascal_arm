@@ -212,7 +212,7 @@ type
   BTABLE: Word;
  end;
 
- TUSBMem = packed array[0..511] of byte;
+ TUSBMem = array[0..511] of byte;
 
  TCANMailbox = record
   IR,
@@ -467,7 +467,7 @@ type
   STIR: longword;
  end;
 
- TSCBRegisters = packed record
+ TSCBRegisters = record
   CPUID,                            {!< CPU ID Base Register                                     }
   ICSR,                            {!< Interrupt Control State Register                        }
   VTOR,                            {!< Vector Table Offset Register                            }
@@ -489,7 +489,7 @@ type
   ISAR: array[0..4] of longword;    {!< ISA Feature Register                                     }
  end;
 
- TSysTickRegisters = packed record
+ TSysTickRegisters = record
   Ctrl,
   Load,
   Val,
