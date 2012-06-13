@@ -2043,6 +2043,30 @@ implementation
             hp:=tused_unit(hp.next);
           end;
 
+        for i := 0 to current_module.symlist.Count-1 do
+          begin
+            sym:=tsym(current_module.symlist[i]);
+            if not assigned(sym) then
+              continue;
+            if sym.typ = procsym then
+              begin
+                for i2 := 0 to tprocsym(sym).ProcdefList.Count-1 do
+                  begin
+                    pd:=tprocdef(tprocsym(sym).ProcdefList[i2]);
+                    if pd.interruptvector >= 0 then
+                      begin
+                        if pd.interruptvector > high(interruptTable) then
+                           Internalerror(2011030602);
+                        if interruptTable[pd.interruptvector] <> nil then
+                          internalerror(2011030601);
+ 
+                        interruptTable[pd.interruptvector]:=pd;
+                        break;
+                      end;
+                  end;
+              end;
+          end;
+
         new_section(current_asmdata.asmlists[al_globals],sec_init,'VECTORS',sizeof(pint));
         current_asmdata.asmlists[al_globals].concat(Tai_symbol.Createname_global('VECTORS',AT_DATA,0));
 {$IFDEF arm}
