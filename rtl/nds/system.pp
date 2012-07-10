@@ -30,8 +30,6 @@ interface
 {$i ndsh.inc}
 {$i libch.inc}
 
-
-
 {$define fpc_softfpu_interface}
 {$i softfpu.pp}
 {$undef fpc_softfpu_interface}
