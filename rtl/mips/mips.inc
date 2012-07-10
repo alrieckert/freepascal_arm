@@ -37,6 +37,26 @@ function get_got_z : pointer;assembler;nostackframe;[public, alias: 'FPC_GETGOT_
     move $2,$28
   end;
 
+const
+  { FPU enable exception bits for FCSR register }
+  fpu_enable_inexact   =  $80;
+  fpu_enable_underflow = $100;
+  fpu_enable_overflow  = $200;
+  fpu_enable_div_zero  = $400;
+  fpu_enable_invalid   = $800;
+  fpu_enable_mask      = $F80;
+  default_fpu_enable = fpu_enable_div_zero or fpu_enable_invalid;
+
+  fpu_flags_mask = $7C;
+  fpu_cause_mask = $3F000;
+
+  { FPU rounding mask and values }
+  fpu_rounding_mask    = $3;
+  fpu_rounding_nearest = 0;
+  fpu_rounding_towards_zero = 1;
+  fpu_rounding_plus_inf = 2;
+  fpu_rounding_minus_inf = 3;
+
 
 procedure fpc_cpuinit;
 var
@@ -45,11 +65,17 @@ var
     { don't let libraries influence the FPU cw set by the host program }
     if not IsLibrary then
       begin
-        { enable div by 0 and invalid operation fpu exceptions }
-        { round towards zero; ieee compliant arithmetics }
-
         tmp32 := get_fsr();
-        set_fsr((tmp32 and $fffffffc) or $00000001);
+        { enable div by 0 and invalid operation fpu exceptions,
+          disable the other exceptions }
+        tmp32 := (tmp32 and not fpu_enable_mask) or default_fpu_enable;
+        { Reset flags and cause }
+        tmp32 := tmp32 and not (fpu_flags_mask or fpu_cause_mask);
+
+        { round towards nearest; ieee compliant arithmetics }
+        tmp32 := (tmp32 and not fpu_rounding_mask) or fpu_rounding_nearest;
+
+        set_fsr(tmp32);
       end;
   end;
 
@@ -70,25 +96,105 @@ function get_frame:pointer;assembler;nostackframe;
       Further, we need to know the pc
     }
     // lw $2,0($sp)
-    lui $2,0
+    move $2,$30
   end;
 
+
+{ Try to find previous $fp,$ra register pair
+  reset both to nil if failure }
+{$define FPC_SYSTEM_HAS_GET_CALLER_STACKINFO}
+procedure get_caller_stackinfo(var framebp,addr : pointer);
+const
+  instr_size = 4;
+  MAX_INSTRUCTIONS = 64000;
+type
+  instr_p = pdword;
+  reg_p = ppointer;
+var
+  instr,stackpos : dword;
+  i,LocalSize : longint;
+  ra_offset, s8_offset : longint;
+  current_ra : pointer;
+begin
+  { Here we need to use GDB approach,
+    starting at addr
+    go back to lower $ra values until we find a
+    position with ADDIU $sp,$sp,-LocalSize
+  }
+  if addr=nil then
+    begin
+	  framebp:=nil;
+	  exit;
+	end;
+  Try
+    current_ra:=addr;
+    ra_offset:=-1;
+    s8_offset:=-1;
+    i:=0;
+    LocalSize:=0;
+    repeat
+      inc(i);
+      dec(current_ra,4);
+      instr:=instr_p(current_ra)^;
+      if (instr shr 16 = $27bd) then
+        begin
+          { we found the instruction,
+            local size is the lo part }
+          LocalSize:=smallint(instr and $ffff);
+          break;
+        end;
+    until i> MAX_INSTRUCTIONS;
+    if LocalSize <> 0 then
+      begin
+        repeat
+          inc(current_ra,4);
+          instr:=instr_p(current_ra)^;
+          if (instr shr 16 = $afbf) then
+            ra_offset:=smallint(instr and $ffff)
+          else if (instr shr 16 = $afbe) then
+            s8_offset:=smallint(instr and $ffff);
+        until (current_ra >= addr)
+          or ((ra_offset<>-1) and (s8_offset<>-1));
+        if ra_offset<>-1 then
+          begin
+            stackpos:=dword(framebp+LocalSize+ra_offset);
+            addr:=reg_p(stackpos)^;
+          end
+        else
+          addr:=nil;
+        if s8_offset<>-1 then
+          begin
+            stackpos:=dword(framebp+LocalSize+s8_offset);
+            framebp:=reg_p(stackpos)^;
+          end
+        else
+          framebp:=nil;
+      end;
+  Except
+    framebp:=nil;
+    addr:=nil;
+  end;
+end;
+
+{$define FPC_SYSTEM_HAS_GET_PC_ADDR}
+function get_pc_addr : pointer;assembler;nostackframe;
+asm
+  move $2,$31
+end;
 
 {$define FPC_SYSTEM_HAS_GET_CALLER_ADDR}
-function get_caller_addr(framebp:pointer):pointer;assembler;nostackframe;
-  asm
-    // lw $2,4($4) // #movl    4(%eax),%eax
-    lui $2,0
-  end;
-
+function get_caller_addr(framebp:pointer;addr:pointer=nil):pointer;
+begin
+  get_caller_stackinfo(framebp,addr);
+  get_caller_addr:=addr;
+end;
 
 {$define FPC_SYSTEM_HAS_GET_CALLER_FRAME}
-function get_caller_frame(framebp:pointer):pointer;assembler;nostackframe;
-  asm
-    // lw $2,0($4) // #movl    (%eax),%eax
-    lui $2,0
-  end;
-
+function get_caller_frame(framebp:pointer;addr:pointer=nil):pointer;
+begin
+  get_caller_stackinfo(framebp,addr);
+  get_caller_frame:=framebp;
+end;
 
 {$define FPC_SYSTEM_HAS_SPTR}
 function Sptr:Pointer;assembler;nostackframe;

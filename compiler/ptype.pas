@@ -151,6 +151,20 @@ implementation
                            not(is_objcclass(ttypesym(srsym).typedef)) and
                            not(is_javaclass(ttypesym(srsym).typedef)) then
                           MessagePos1(def.typesym.fileinfo,type_e_class_type_expected,ttypesym(srsym).typedef.typename);
+                        { this could also be a generic dummy that was not
+                          overridden with a specific type }
+                        if (sp_generic_dummy in srsym.symoptions) and
+                            (
+                              (ttypesym(srsym).typedef.typ=undefineddef) or
+                              (
+                                { or an unspecialized generic symbol, which is
+                                  the case for generics defined in non-Delphi
+                                  modes }
+                                (df_generic in ttypesym(srsym).typedef.defoptions) and
+                                not parse_generic
+                              )
+                            ) then
+                          MessagePos(def.typesym.fileinfo,parser_e_no_generics_as_types);
                       end
                      else
                       begin
@@ -425,8 +439,22 @@ implementation
         if ([stoAllowSpecialization,stoAllowTypeDef] * options <> []) and
            (m_delphi in current_settings.modeswitches) then
           dospecialize:=token in [_LSHARPBRACKET,_LT];
+        if dospecialize and
+            (def.typ=forwarddef) then
+          begin
+            if not assigned(srsym) or not (srsym.typ=typesym) then
+              begin
+                Message(type_e_type_is_not_completly_defined);
+                def:=generrordef;
+                dospecialize:=false;
+              end;
+          end;
         if dospecialize then
-          generate_specialization(def,stoParseClassParent in options,'',nil,'')
+          begin
+            if def.typ=forwarddef then
+              def:=ttypesym(srsym).typedef;
+            generate_specialization(def,stoParseClassParent in options,'',nil,'');
+          end
         else
           begin
             if assigned(current_specializedef) and (def=current_specializedef.genericdef) then
@@ -775,6 +803,10 @@ implementation
          if old_parse_generic then
            include(current_structdef.defoptions, df_generic);
          parse_generic:=(df_generic in current_structdef.defoptions);
+         { in non-Delphi modes we need a strict private symbol without type
+           count and type parameters in the name to simply resolving }
+         maybe_insert_generic_rename_symbol(n,genericlist);
+
          if m_advanced_records in current_settings.modeswitches then
            begin
              parse_record_members;
@@ -1131,40 +1163,40 @@ implementation
                        begin
                          if pt.nodetype=rangen then
                            begin
-                             { check the expression only if we are not in a generic declaration }
-                             if not(parse_generic) then
+                             { pure ordconstn expressions can be checked for
+                               generics as well, but don't give an error in case
+                               of parsing a generic if that isn't yet the case }
+                             if (trangenode(pt).left.nodetype=ordconstn) and
+                                (trangenode(pt).right.nodetype=ordconstn) then
                                begin
-                                 if (trangenode(pt).left.nodetype=ordconstn) and
-                                    (trangenode(pt).right.nodetype=ordconstn) then
+                                 { make both the same type or give an error. This is not
+                                   done when both are integer values, because typecasting
+                                   between -3200..3200 will result in a signed-unsigned
+                                   conflict and give a range check error (PFV) }
+                                 if not(is_integer(trangenode(pt).left.resultdef) and is_integer(trangenode(pt).left.resultdef)) then
+                                   inserttypeconv(trangenode(pt).left,trangenode(pt).right.resultdef);
+                                 lowval:=tordconstnode(trangenode(pt).left).value;
+                                 highval:=tordconstnode(trangenode(pt).right).value;
+                                 if highval<lowval then
+                                  begin
+                                    Message(parser_e_array_lower_less_than_upper_bound);
+                                    highval:=lowval;
+                                  end
+                                 else if (lowval<int64(low(asizeint))) or
+                                         (highval>high(asizeint)) then
                                    begin
-                                     { make both the same type or give an error. This is not
-                                       done when both are integer values, because typecasting
-                                       between -3200..3200 will result in a signed-unsigned
-                                       conflict and give a range check error (PFV) }
-                                     if not(is_integer(trangenode(pt).left.resultdef) and is_integer(trangenode(pt).left.resultdef)) then
-                                       inserttypeconv(trangenode(pt).left,trangenode(pt).right.resultdef);
-                                     lowval:=tordconstnode(trangenode(pt).left).value;
-                                     highval:=tordconstnode(trangenode(pt).right).value;
-                                     if highval<lowval then
-                                      begin
-                                        Message(parser_e_array_lower_less_than_upper_bound);
-                                        highval:=lowval;
-                                      end
-                                     else if (lowval<int64(low(asizeint))) or
-                                             (highval>high(asizeint)) then
-                                       begin
-                                         Message(parser_e_array_range_out_of_bounds);
-                                         lowval :=0;
-                                         highval:=0;
-                                       end;
-                                     if is_integer(trangenode(pt).left.resultdef) then
-                                       range_to_type(lowval,highval,indexdef)
-                                     else
-                                       indexdef:=trangenode(pt).left.resultdef;
-                                   end
+                                     Message(parser_e_array_range_out_of_bounds);
+                                     lowval :=0;
+                                     highval:=0;
+                                   end;
+                                 if is_integer(trangenode(pt).left.resultdef) then
+                                   range_to_type(lowval,highval,indexdef)
                                  else
-                                   Message(type_e_cant_eval_constant_expr);
-                               end;
+                                   indexdef:=trangenode(pt).left.resultdef;
+                               end
+                             else
+                               if not parse_generic then
+                                 Message(type_e_cant_eval_constant_expr);
                            end
                          else
                            Message(sym_e_error_in_type_def)
@@ -1312,6 +1344,7 @@ implementation
 
       const
         SingleTypeOptionsInTypeBlock:array[Boolean] of TSingleTypeOptions = ([],[stoIsForwardDef]);
+        SingleTypeOptionsIsDelphi:array[Boolean] of TSingleTypeOptions = ([],[stoAllowSpecialization]);
       var
         p  : tnode;
         hdef : tdef;
@@ -1441,7 +1474,17 @@ implementation
            _CARET:
               begin
                 consume(_CARET);
-                single_type(tt2,SingleTypeOptionsInTypeBlock[block_type=bt_type]);
+                single_type(tt2,
+                    SingleTypeOptionsInTypeBlock[block_type=bt_type]+
+                    SingleTypeOptionsIsDelphi[m_delphi in current_settings.modeswitches]
+                  );
+                { in case of e.g. var or const sections we need to especially
+                  check that we don't use a generic dummy symbol }
+                if (block_type<>bt_type) and
+                    (tt2.typ=undefineddef) and
+                    assigned(tt2.typesym) and
+                    (sp_generic_dummy in tt2.typesym.symoptions) then
+                  Message(parser_e_no_generics_as_types);
                 { don't use getpointerdef() here, since this is a type
                   declaration (-> must create new typedef) }
                 def:=tpointerdef.create(tt2);

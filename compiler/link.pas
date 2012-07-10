@@ -115,7 +115,8 @@ interface
          property StaticLibraryList:TFPHashObjectList read FStaticLibraryList;
          property ImportLibraryList:TFPHashObjectList read FImportLibraryList;
          procedure DefaultLinkScript;virtual;abstract;
-         procedure ConcatGenericSections(secnames:string);
+         procedure ScriptAddGenericSections(secnames:string);
+         procedure ScriptAddSourceStatements(AddSharedAsStatic:boolean);virtual;
       public
          IsSharedLibrary : boolean;
          UseStabs : boolean;
@@ -531,14 +532,10 @@ Implementation
       end;
 
 
-    procedure AddImportSymbol(const libname,symname,symmangledname:TCmdStr;OrdNr: longint;isvar:boolean);
-      begin
-      end;
-
-
     procedure TLinker.InitSysInitUnitName;
       begin
       end;
+
 
     function TLinker.MakeExecutable:boolean;
       begin
@@ -901,6 +898,35 @@ Implementation
       end;
 
 
+    procedure TInternalLinker.ScriptAddSourceStatements(AddSharedAsStatic:boolean);
+      var
+        s,s2: TCmdStr;
+      begin
+        while not ObjectFiles.Empty do
+          begin
+            s:=ObjectFiles.GetFirst;
+            if s<>'' then
+              LinkScript.Concat('READOBJECT '+MaybeQuoted(s));
+          end;
+        while not StaticLibFiles.Empty do
+          begin
+            s:=StaticLibFiles.GetFirst;
+            if s<>'' then
+              LinkScript.Concat('READSTATICLIBRARY '+MaybeQuoted(s));
+          end;
+        if not AddSharedAsStatic then
+          exit;
+        while not SharedLibFiles.Empty do
+          begin
+            S:=SharedLibFiles.GetFirst;
+            if FindLibraryFile(s,target_info.staticClibprefix,target_info.staticClibext,s2) then
+              LinkScript.Concat('READSTATICLIBRARY '+MaybeQuoted(s2))
+            else
+              Comment(V_Error,'Import library not found for '+S);
+          end;
+      end;
+
+
     procedure TInternalLinker.Load_ReadObject(const para:TCmdStr);
       var
         objdata   : TObjData;
@@ -951,7 +977,10 @@ Implementation
             inc(i);
             s:=hp.str;
             if (s='') or (s[1]='#') then
-              continue;
+              begin
+                hp:=TCmdStrListItem(hp.next);
+                continue;
+              end;
             keyword:=Upper(GetToken(s,' '));
             para:=GetToken(s,' ');
             if Trim(s)<>'' then
@@ -1037,6 +1066,7 @@ Implementation
             if (s='') or (s[1]='#') then
               begin
                 IsHandled^[i]:=true;
+                hp:=TCmdStrListItem(hp.next);
                 continue;
               end;
             handled:=true;
@@ -1084,7 +1114,10 @@ Implementation
             inc(i);
             s:=hp.str;
             if (s='') or (s[1]='#') then
-              continue;
+              begin
+                hp:=TCmdStrListItem(hp.next);
+                continue;
+              end;
             handled:=true;
             keyword:=Upper(GetToken(s,' '));
             para:=ParsePara(GetToken(s,' '));
@@ -1136,7 +1169,10 @@ Implementation
             inc(i);
             s:=hp.str;
             if (s='') or (s[1]='#') then
-              continue;
+              begin
+                hp:=TCmdStrListItem(hp.next);
+                continue;
+              end;
             handled:=true;
             keyword:=Upper(GetToken(s,' '));
             para:=ParsePara(GetToken(s,' '));
@@ -1172,7 +1208,10 @@ Implementation
             inc(i);
             s:=hp.str;
             if (s='') or (s[1]='#') then
-              continue;
+              begin
+                hp:=TCmdStrListItem(hp.next);
+                continue;
+              end;
             handled:=true;
             keyword:=Upper(GetToken(s,' '));
             para:=ParsePara(GetToken(s,' '));
@@ -1261,6 +1300,7 @@ Implementation
         { Calc positions in mem }
         ParseScript_MemPos;
         exeoutput.FixupRelocations;
+        exeoutput.RemoveUnusedExeSymbols;
         exeoutput.PrintMemoryMap;
         if ErrorCount>0 then
           goto myexit;
@@ -1335,7 +1375,7 @@ Implementation
       end;
 
 
-    procedure TInternalLinker.ConcatGenericSections(secnames:string);
+    procedure TInternalLinker.ScriptAddGenericSections(secnames:string);
       var
         secname:string;
       begin

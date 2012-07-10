@@ -1527,7 +1527,7 @@ implementation
       eleref: treference;
     begin
       { only in case of initialisation, we have to set all elements to "empty" }
-      if name<>'FPC_INITIALIZE_ARRAY' then
+      if name<>'fpc_initialize_array' then
         exit;
       { put array on the stack }
       a_load_ref_stack(list,java_jlobject,ref,prepare_stack_for_ref(list,ref,false));
@@ -1583,7 +1583,7 @@ implementation
          not is_dynamic_array(t) then
         begin
           dummyloc.loc:=LOC_INVALID;
-          g_array_rtti_helper(list,tarraydef(t).elementdef,ref,dummyloc,'FPC_INITIALIZE_ARRAY')
+          g_array_rtti_helper(list,tarraydef(t).elementdef,ref,dummyloc,'fpc_initialize_array')
         end
       else if is_record(t) then
         begin
@@ -2128,6 +2128,9 @@ implementation
             enum instance for 0 if it exists (if not, it remains nil since
             there is no valid enum value in it) }
           else if (vs.vardef.typ=enumdef) and
+                  ((vs.typ<>fieldvarsym) or
+                   (tdef(vs.owner.defowner).typ<>objectdef) or
+                   (ts_jvm_enum_field_init in current_settings.targetswitches)) and
                   get_enum_init_val_ref(vs.vardef,initref) then
             allocate_enum_with_base_ref(list,vs,initref,ref);
         end;

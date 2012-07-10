@@ -40,6 +40,7 @@ procedure fpc_zeromem(p:pointer;len:ptruint);compilerproc;
 procedure fpc_fillmem(out data;len:ptruint;b : byte);compilerproc;
 
 procedure fpc_Shortstr_SetLength(var s:shortstring;len:SizeInt); compilerproc;
+procedure fpc_shortstr_assign(len:longint;sstr,dstr:pointer); compilerproc;
 procedure fpc_shortstr_to_shortstr(out res:shortstring; const sstr: shortstring); compilerproc;
 
 procedure fpc_shortstr_concat(var dests:shortstring;const s1,s2:shortstring);compilerproc;
@@ -421,7 +422,7 @@ procedure fpc_variant_init(var v: tvardata);compilerproc;
 procedure fpc_variant_clear(var v: tvardata);compilerproc;
 {$ifdef FPC_VARIANTCOPY_FIXED}
 procedure fpc_variant_copy(var d: tvardata; const s : tvardata);compilerproc;
-procedure fpc_variant_copy_overwrite(const source: tvardata; var dest : tvardata);compilerproc;
+procedure fpc_variant_copy_overwrite(constref source: tvardata; var dest : tvardata);compilerproc;
 {$else FPC_VARIANTCOPY_FIXED}
 procedure fpc_variant_copy(d,s : pointer);compilerproc;
 procedure fpc_variant_copy_overwrite(source, dest : pointer);compilerproc;

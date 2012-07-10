@@ -103,6 +103,7 @@ type
     FName: string;
     FParent: TPasElement;
     FHints : TPasMemberHints;
+    FHintMessage : String;
   protected
     procedure ProcessHints(const ASemiColonPrefix: boolean; var AResult: string); virtual;
   public
@@ -125,6 +126,7 @@ type
     property Parent: TPasElement read FParent;
     Property Hints : TPasMemberHints Read FHints Write FHints;
     Property CustomData : TObject Read FData Write FData;
+    Property HintMessage : String Read FHintMessage Write FHintMessage;
   end;
 
   TPasExprKind = (pekIdent, pekNumber, pekString, pekSet, pekNil, pekBoolConst, pekRange,
@@ -494,7 +496,7 @@ type
 
 
 
-  TArgumentAccess = (argDefault, argConst, argVar, argOut);
+  TArgumentAccess = (argDefault, argConst, argVar, argOut, argConstRef);
 
   { TPasArgument }
 
@@ -506,7 +508,8 @@ type
   public
     Access: TArgumentAccess;
     ArgType: TPasType;
-    Value: string;
+    ValueExpr: TPasExpr;
+    Function Value : String;
   end;
 
   { TPasProcedureType }
@@ -522,6 +525,7 @@ type
     function CreateArgument(const AName, AUnresolvedTypeName: string):TPasArgument;
   public
     IsOfObject: Boolean;
+    IsNested : Boolean;
     Args: TFPList;        // List of TPasArgument objects
     CallingConvention : TCallingConvention;
   end;
@@ -1029,7 +1033,7 @@ type
   end;
 
 const
-  AccessNames: array[TArgumentAccess] of string[6] = ('', 'const ', 'var ', 'out ');
+  AccessNames: array[TArgumentAccess] of string[9] = ('', 'const ', 'var ', 'out ','constref ');
   AllVisibilities: TPasMemberVisibilities =
      [visDefault, visPrivate, visProtected, visPublic,
       visPublished, visAutomated];
@@ -1452,6 +1456,7 @@ destructor TPasArgument.Destroy;
 begin
   if Assigned(ArgType) then
     ArgType.Release;
+  FreeAndNil(ValueExpr);
   inherited Destroy;
 end;
 
@@ -2128,7 +2133,9 @@ begin
     S.Add(TypeName);
     GetArguments(S);
     If IsOfObject then
-      S.Add(' of object');
+      S.Add(' of object')
+    else if IsNested then
+      S.Add(' is nested');
     If Full then
       Result:=IndentStrings(S,Length(S[0])+Length(S[1])+1)
     else
@@ -2442,6 +2449,14 @@ begin
     end
   else If Full then
     Result:=Name
+  else
+    Result:='';
+end;
+
+function TPasArgument.Value: String;
+begin
+  If Assigned(ValueExpr) then
+    Result:=ValueExpr.GetDeclaration(true)
   else
     Result:='';
 end;

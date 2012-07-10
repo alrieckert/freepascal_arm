@@ -29,12 +29,17 @@ interface
 uses
   { common }
   cclasses,
+  { global }
+  globtype,
   { symtable }
   symtype,symdef,symbase;
 
     procedure generate_specialization(var tt:tdef;parse_class_parent:boolean;_prettyname:string;parsedtype:tdef;symname:string);
     function parse_generic_parameters:TFPObjectList;
+    function parse_generic_specialization_types(genericdeflist:tfpobjectlist;out prettyname,specializename:ansistring;parsedtype:tdef):boolean;
     procedure insert_generic_parameter_types(def:tstoreddef;genericdef:tstoreddef;genericlist:TFPObjectList);
+    procedure maybe_insert_generic_rename_symbol(const name:tidstring;genericlist:tfpobjectlist);
+    function generate_generic_name(const name:tidstring;specializename:ansistring):tidstring;
 
     type
       tspecializationstate = record
@@ -51,7 +56,7 @@ uses
   { common }
   cutils,fpccrc,
   { global }
-  globals,globtype,tokens,verbose,
+  globals,tokens,verbose,
   { symtable }
   symconst,symsym,symtable,
   { modules }
@@ -187,59 +192,7 @@ uses
         genericdeflist:=TFPObjectList.Create(false);
 
         { Parse type parameters }
-        err:=false;
-        { set the block type to type, so that the parsed type are returned as
-          ttypenode (e.g. classes are in non type-compatible blocks returned as
-          tloadvmtaddrnode) }
-        old_block_type:=block_type;
-        { if parsedtype is set, then the first type identifer was already parsed
-          (happens in inline specializations) and thus we only need to parse
-          the remaining types and do as if the first one was already given }
-        first:=not assigned(parsedtype);
-        if assigned(parsedtype) then
-          begin
-            genericdeflist.Add(parsedtype);
-            specializename:='$'+parsedtype.typename;
-            prettyname:=parsedtype.typesym.prettyname;
-          end
-        else
-          begin
-            specializename:='';
-            prettyname:='';
-          end;
-        while not (token in [_GT,_RSHARPBRACKET]) do
-          begin
-            { "first" is set to false at the end of the loop! }
-            if not first then
-              consume(_COMMA);
-            block_type:=bt_type;
-            pt2:=factor(false,true);
-            if pt2.nodetype=typen then
-              begin
-                if df_generic in pt2.resultdef.defoptions then
-                  Message(parser_e_no_generics_as_params);
-                genericdeflist.Add(pt2.resultdef);
-                if not assigned(pt2.resultdef.typesym) then
-                  message(type_e_generics_cannot_reference_itself)
-                else
-                  begin
-                    specializename:=specializename+'$'+pt2.resultdef.typename;
-                    if first then
-                      prettyname:=prettyname+pt2.resultdef.typesym.prettyname
-                    else
-                      prettyname:=prettyname+','+pt2.resultdef.typesym.prettyname;
-                  end;
-              end
-            else
-              begin
-                Message(type_e_type_id_expected);
-                err:=true;
-              end;
-            pt2.free;
-            first:=false;
-          end;
-        block_type:=old_block_type;
-
+        err:=not parse_generic_specialization_types(genericdeflist,prettyname,specializename,parsedtype);
         if err then
           begin
             try_to_consume(_RSHARPBRACKET);
@@ -257,7 +210,8 @@ uses
           genname:=symname;
         { in case of non-Delphi mode the type name could already be a generic
           def (but maybe the wrong one) }
-        if assigned(genericdef) and (df_generic in genericdef.defoptions) then
+        if assigned(genericdef) and
+            ([df_generic,df_specialization]*genericdef.defoptions<>[]) then
           begin
             { remove the type count suffix from the generic's name }
             for i:=Length(genname) downto 1 do
@@ -266,6 +220,15 @@ uses
                   genname:=copy(genname,1,i-1);
                   break;
                 end;
+            { in case of a specialization we've only reached the specialization
+              checksum yet }
+            if df_specialization in genericdef.defoptions then
+              for i:=length(genname) downto 1 do
+                if genname[i]='$' then
+                  begin
+                    genname:=copy(genname,1,i-1);
+                    break;
+                  end;
           end;
         genname:=genname+'$'+countstr;
         ugenname:=upper(genname);
@@ -292,8 +255,7 @@ uses
         genericdef:=tstoreddef(ttypesym(srsym).typedef);
 
         { build the new type's name }
-        crc:=UpdateCrc32(0,specializename[1],length(specializename));
-        finalspecializename:=genname+'$crc'+hexstr(crc,8);
+        finalspecializename:=generate_generic_name(genname,specializename);
         ufinalspecializename:=upper(finalspecializename);
         prettyname:=genericdef.typesym.prettyname+'<'+prettyname+'>';
 
@@ -557,6 +519,67 @@ uses
         until not try_to_consume(_COMMA) ;
       end;
 
+    function parse_generic_specialization_types(genericdeflist:tfpobjectlist;out prettyname,specializename:ansistring;parsedtype:tdef):boolean;
+      var
+        old_block_type : tblock_type;
+        first : boolean;
+        typeparam : tnode;
+      begin
+        result:=true;
+        if genericdeflist=nil then
+          internalerror(2012061401);
+        { set the block type to type, so that the parsed type are returned as
+          ttypenode (e.g. classes are in non type-compatible blocks returned as
+          tloadvmtaddrnode) }
+        old_block_type:=block_type;
+        { if parsedtype is set, then the first type identifer was already parsed
+          (happens in inline specializations) and thus we only need to parse
+          the remaining types and do as if the first one was already given }
+        first:=not assigned(parsedtype);
+        if assigned(parsedtype) then
+          begin
+            genericdeflist.Add(parsedtype);
+            specializename:='$'+parsedtype.typename;
+            prettyname:=parsedtype.typesym.prettyname;
+          end
+        else
+          begin
+            specializename:='';
+            prettyname:='';
+          end;
+        while not (token in [_GT,_RSHARPBRACKET]) do
+          begin
+            { "first" is set to false at the end of the loop! }
+            if not first then
+              consume(_COMMA);
+            block_type:=bt_type;
+            typeparam:=factor(false,true);
+            if typeparam.nodetype=typen then
+              begin
+                if df_generic in typeparam.resultdef.defoptions then
+                  Message(parser_e_no_generics_as_params);
+                genericdeflist.Add(typeparam.resultdef);
+                if not assigned(typeparam.resultdef.typesym) then
+                  message(type_e_generics_cannot_reference_itself)
+                else
+                  begin
+                    specializename:=specializename+'$'+typeparam.resultdef.typename;
+                    if first then
+                      prettyname:=prettyname+typeparam.resultdef.typesym.prettyname
+                    else
+                      prettyname:=prettyname+','+typeparam.resultdef.typesym.prettyname;
+                  end;
+              end
+            else
+              begin
+                Message(type_e_type_id_expected);
+                result:=false;
+              end;
+            typeparam.free;
+            first:=false;
+          end;
+        block_type:=old_block_type;
+      end;
 
     procedure insert_generic_parameter_types(def:tstoreddef;genericdef:tstoreddef;genericlist:TFPObjectList);
       var
@@ -586,6 +609,51 @@ uses
             st.insert(generictype);
           end;
        end;
+
+    procedure maybe_insert_generic_rename_symbol(const name:tidstring;genericlist:tfpobjectlist);
+      var
+        gensym : ttypesym;
+      begin
+        { for generics in non-Delphi modes we insert a private type symbol
+          that has the same base name as the currently parsed generic and
+          that references this defs }
+        if not (m_delphi in current_settings.modeswitches) and
+            (
+              (
+                parse_generic and
+                assigned(genericlist) and
+                (genericlist.count>0)
+              ) or
+              (
+                assigned(current_specializedef) and
+                assigned(current_structdef.genericdef) and
+                (current_structdef.genericdef.typ in [objectdef,recorddef]) and
+                (pos('$',name)>0)
+              )
+            ) then
+          begin
+            { we need to pass nil as def here, because the constructor wants
+              to set the typesym of the def which is not what we want }
+            gensym:=ttypesym.create(copy(name,1,pos('$',name)-1),nil);
+            gensym.typedef:=current_structdef;
+            include(gensym.symoptions,sp_internal);
+            { the symbol should be only visible to the generic class
+              itself }
+            gensym.visibility:=vis_strictprivate;
+            symtablestack.top.insert(gensym);
+          end;
+      end;
+
+    function generate_generic_name(const name:tidstring;specializename:ansistring):tidstring;
+    var
+      crc : cardinal;
+    begin
+      if specializename='' then
+        internalerror(2012061901);
+      { build the new type's name }
+      crc:=UpdateCrc32(0,specializename[1],length(specializename));
+      result:=name+'$crc'+hexstr(crc,8);
+    end;
 
     procedure specialization_init(genericdef:tdef;var state: tspecializationstate);
     var
@@ -617,10 +685,18 @@ uses
             if sym.typ=unitsym then
               unitsyms.add(upper(sym.realname),sym);
           end;
-      { add all interface units to the new symtable stack }
+      { add all units if we are specializing inside the current unit (as the
+        generic could have been declared in the implementation part), but load
+        only interface units, if we are in a different unit as then the generic
+        needs to be in the interface section }
       pu:=tused_unit(hmodule.used_units.first);
       while assigned(pu) do
         begin
+          if (hmodule<>current_module) and not pu.in_interface then
+            begin
+              pu:=tused_unit(pu.next);
+              continue;
+            end;
           if not assigned(pu.u.globalsymtable) then
             internalerror(200705153);
           symtablestack.push(pu.u.globalsymtable);

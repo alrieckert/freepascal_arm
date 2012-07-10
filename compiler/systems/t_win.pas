@@ -939,31 +939,10 @@ implementation
 
 
     procedure TInternalLinkerWin.DefaultLinkScript;
-      var
-        s,s2 : TCmdStr;
       begin
+        ScriptAddSourceStatements(true);
         with LinkScript do
           begin
-            while not ObjectFiles.Empty do
-              begin
-                s:=ObjectFiles.GetFirst;
-                if s<>'' then
-                  Concat('READOBJECT '+MaybeQuoted(s));
-              end;
-            while not StaticLibFiles.Empty do
-              begin
-                s:=StaticLibFiles.GetFirst;
-                if s<>'' then
-                  Concat('READSTATICLIBRARY '+MaybeQuoted(s));
-              end;
-            While not SharedLibFiles.Empty do
-              begin
-                S:=SharedLibFiles.GetFirst;
-                if FindLibraryFile(s,target_info.staticClibprefix,target_info.staticClibext,s2) then
-                  Concat('READSTATICLIBRARY '+MaybeQuoted(s2))
-                else
-                  Comment(V_Error,'Import library not found for '+S);
-              end;
             if IsSharedLibrary then
               Concat('ISSHAREDLIBRARY');
             ConcatEntryName;
@@ -1079,7 +1058,7 @@ implementation
             Concat('  OBJSECTION .idata$6*');
             Concat('  OBJSECTION .idata$7*');
             Concat('ENDEXESECTION');
-            ConcatGenericSections('.edata,.rsrc,.reloc,.gnu_debuglink,'+
+            ScriptAddGenericSections('.edata,.rsrc,.reloc,.gnu_debuglink,'+
                       '.debug_aranges,.debug_pubnames,.debug_info,.debug_abbrev,.debug_line,.debug_frame,.debug_str,.debug_loc,'+
                       '.debug_macinfo,.debug_weaknames,.debug_funcnames,.debug_typenames,.debug_varnames,.debug_ranges');
             { Can't use the generic rules, because that will add also .stabstr to .stab }

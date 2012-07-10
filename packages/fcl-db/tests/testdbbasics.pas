@@ -42,6 +42,8 @@ type
     procedure TestSupportBCDFields;
     procedure TestSupportfmtBCDFields;
     procedure TestSupportFixedStringFields;
+    procedure TestSupportBlobFields;
+    procedure TestSupportMemoFields;
 
     procedure TestDoubleClose;
     procedure TestCalculatedField;
@@ -58,6 +60,7 @@ type
     procedure TestdeFieldListChange;
     procedure TestExceptionLocateClosed;    // bug 13938
     procedure TestCanModifySpecialFields;
+    procedure TestDetectionNonMatchingDataset;
   end;
 
   { TTestBufDatasetDBBasics }
@@ -677,12 +680,39 @@ begin
     CheckFalse(FieldByName('LookupFld').ReadOnly);
 
     CheckEquals(1,FieldByName('ID').AsInteger);
-    CheckEquals('name1',FieldByName('LookupFld').AsString);
-    close;
+    CheckEquals('TestName1',FieldByName('LookupFld').AsString);
+    Next;
+    Next;
+    CheckEquals(3,FieldByName('ID').AsInteger);
+    CheckEquals('TestName3',FieldByName('LookupFld').AsString);
+
+    Close;
     lds.Close;
     end;
 end;
 
+procedure TTestDBBasics.TestDetectionNonMatchingDataset;
+var
+  F: TField;
+  ds: tdataset;
+begin
+  // TDataset.Bindfields should detect problems when the underlying data does
+  // not reflect the fields of the dataset. This test is to check if this is
+  // really done.
+  ds := DBConnector.GetNDataset(true,6);
+  with ds do
+    begin
+    open;
+    close;
+
+    F := TStringField.Create(ds);
+    F.FieldName:='DOES_NOT_EXIST';
+    F.DataSet:=ds;
+    F.Size:=50;
+
+    CheckException(open,EDatabaseError);
+    end;
+end;
 
 procedure TTestCursorDBBasics.TestAppendInsertRecord;
 begin
@@ -2354,6 +2384,37 @@ begin
 {$else fpc}
       CheckEquals(testStringValues[i],Fld.AsString);
 {$endif fpc}
+    ds.Next;
+    end;
+  ds.close;
+end;
+
+procedure TTestDBBasics.TestSupportBlobFields;
+
+var i          : byte;
+    ds         : TDataset;
+    Fld        : TField;
+begin
+  TestfieldDefinition(ftBlob,0,ds,Fld);
+
+  for i := 0 to testValuesCount-1 do
+    begin
+    CheckEquals(testValues[ftBlob,i],Fld.AsString);
+    ds.Next;
+    end;
+  ds.close;
+end;
+
+procedure TTestDBBasics.TestSupportMemoFields;
+var i          : byte;
+    ds         : TDataset;
+    Fld        : TField;
+begin
+  TestfieldDefinition(ftMemo,0,ds,Fld);
+
+  for i := 0 to testValuesCount-1 do
+    begin
+    CheckEquals(testValues[ftMemo,i],Fld.AsString);
     ds.Next;
     end;
   ds.close;

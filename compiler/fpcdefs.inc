@@ -107,6 +107,7 @@
   {$define cpumm}
   {$define cpurox}
   {$define cpurefshaveindexreg}
+  {$define fpc_compiler_has_fixup_jmps}
 {$endif powerpc}
 
 {$ifdef powerpc64}
@@ -117,6 +118,7 @@
   {$define cpumm}
   {$define cpurox}
   {$define cpurefshaveindexreg}
+  {$define fpc_compiler_has_fixup_jmps}
 {$endif powerpc64}
 
 {$ifdef arm}
@@ -171,17 +173,32 @@
 
 {$ifdef mipsel}
   {$define mips}
+{$else not mipsel}
+  { Define both mips and mipseb if mipsel is not defined
+    but mips cpu is wanted. }
+  {$ifdef mipseb}
+    {$define mips}
+  {$endif mipseb}
+  {$ifdef mips}
+    {$define mipseb}
+  {$endif mips}
 {$endif mipsel}
 
+
 {$ifdef mips}
-  {$define cpu32bit}
-  {$define cpu32bitalu}
-  {$define cpu32bitaddr}
+  {$ifndef mips64}
+    {$define cpu32bit}
+    {$define cpu32bitalu}
+    {$define cpu32bitaddr}
+  {$else}
+    {$error mips64 not yet supported}
+  {$endif}
   { define cpuflags}
   {$define cputargethasfixedstack}
   {$define cpurequiresproperalignment}
   { define cpumm}
   {$define cpurefshaveindexreg}
+  {$define fpc_compiler_has_fixup_jmps}
 {$endif mips}
 
 {$ifdef jvm}

@@ -1,5 +1,5 @@
 {
-    Copyright (c) 1998-2002 by Florian Klaempfl
+    Copyright (c) 1998-2012 by the Free Pascal team
 
     This unit implements the base class for the register allocator
 
@@ -191,7 +191,8 @@ unit rgobj;
         {# Highest register allocated until now.}
         reginfo           : PReginfo;
         usable_registers_cnt : word;
-        usable_registers  : array[0..maxcpuregister-1] of tsuperregister;
+        usable_registers  : array[0..maxcpuregister] of tsuperregister;
+        usable_register_set : tcpuregisterset;
         ibitmap           : Tinterferencebitmap;
         spillednodes,
         simplifyworklist,
@@ -399,7 +400,10 @@ unit rgobj;
          // default value set by constructor
          // fillchar(usable_registers,sizeof(usable_registers),0);
          for i:=low(Ausable) to high(Ausable) do
-           usable_registers[i]:=Ausable[i];
+           begin
+             usable_registers[i]:=Ausable[i];
+             include(usable_register_set,Ausable[i]);
+           end;
          usable_registers_cnt:=high(Ausable)+1;
          { Initialize Worklists }
          spillednodes.init;
@@ -996,6 +1000,7 @@ unit rgobj;
 
       begin
         ok:=(t<first_imaginary) or
+            ((r<first_imaginary) and (r in usable_register_set)) or
             (reginfo[t].degree<usable_registers_cnt) or
             ibitmap[r,t];
       end;
@@ -1371,7 +1376,7 @@ unit rgobj;
           n:=coalescednodes.buf^[i-1];
           k:=get_alias(n);
           reginfo[n].colour:=reginfo[k].colour;
-          if reginfo[k].colour<maxcpuregister then
+          if reginfo[k].colour<first_imaginary then
             include(used_in_proc,reginfo[k].colour);
         end;
     end;
@@ -1567,6 +1572,7 @@ unit rgobj;
         p:=headertai;
         while assigned(p) do
           begin
+            prefetch(pointer(p.next)^);
             if p.typ=ait_regalloc then
               with Tai_regalloc(p) do
                 begin
@@ -1632,6 +1638,7 @@ unit rgobj;
         p:=Tai(list.first);
         while assigned(p) do
           begin
+            prefetch(pointer(p.next)^);
             case p.typ of
               ait_regalloc:
                 with Tai_regalloc(p) do
@@ -1867,6 +1874,9 @@ unit rgobj;
         ins:=spilling_create_load(spilltemp,tempreg);
         add_cpu_interferences(ins);
         list.insertafter(ins,pos);
+        {$ifdef DEBUG_SPILLING}
+        list.Insertbefore(tai_comment.Create(strpnew('XXX: Spill Read')),ins);
+        {$endif}
       end;
 
 
@@ -1877,6 +1887,9 @@ unit rgobj;
         ins:=spilling_create_store(tempreg,spilltemp);
         add_cpu_interferences(ins);
         list.insertafter(ins,pos);
+        {$ifdef DEBUG_SPILLING}
+        list.Insertbefore(tai_comment.Create(strpnew('XXX: Spill Write')),ins);
+        {$endif}
       end;
 
 

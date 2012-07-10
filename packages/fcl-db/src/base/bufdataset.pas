@@ -353,7 +353,7 @@ type
     constructor create(AStream : TStream); virtual;
     // Load a dataset from stream:
     // Load the field-definitions from a stream.
-    procedure LoadFieldDefs(AFieldDefs : TFieldDefs); virtual; abstract;
+    procedure LoadFieldDefs(AFieldDefs : TFieldDefs; var AnAutoIncValue : integer); virtual; abstract;
     // Is called before the records are loaded
     procedure InitLoadRecords; virtual; abstract;
     // Return the RowState of the current record, and the order of the update
@@ -367,7 +367,7 @@ type
 
     // Store a dataset to stream:
     // Save the field-definitions to a stream.
-    procedure StoreFieldDefs(AFieldDefs : TFieldDefs); virtual; abstract;
+    procedure StoreFieldDefs(AFieldDefs : TFieldDefs; AnAutoIncValue : integer); virtual; abstract;
     // Save a record from the current record-buffer to the stream
     procedure StoreRecord(ADataset : TCustomBufDataset; ARowState : TRowState; AUpdOrder : integer = 0); virtual; abstract;
     // Is called after all records are stored
@@ -381,8 +381,8 @@ type
 
   TFpcBinaryDatapacketReader = class(TDataPacketReader)
   public
-    procedure LoadFieldDefs(AFieldDefs : TFieldDefs); override;
-    procedure StoreFieldDefs(AFieldDefs : TFieldDefs); override;
+    procedure LoadFieldDefs(AFieldDefs : TFieldDefs; var AnAutoIncValue : integer); override;
+    procedure StoreFieldDefs(AFieldDefs : TFieldDefs; AnAutoIncValue : integer); override;
     function GetRecordRowState(out AUpdOrder : Integer) : TRowState; override;
     procedure FinalizeStoreRecords; override;
     function GetCurrentRecord : boolean; override;
@@ -416,6 +416,8 @@ type
     FOpen           : Boolean;
     FUpdateBuffer   : TRecordsUpdateBuffer;
     FCurrentUpdateBuffer : integer;
+    FAutoIncValue   : longint;
+    FAutoIncField   : TAutoIncField;
 
     FIndexDefs      : TIndexDefs;
 
@@ -457,7 +459,6 @@ type
     procedure InitDefaultIndexes;
   protected
     procedure UpdateIndexDefs; override;
-    function GetNewBlobBuffer : PBlobBuffer;
     function GetNewWriteBlobBuffer : PBlobBuffer;
     procedure FreeBlobBuffer(var ABlobBuffer: PBlobBuffer);
     procedure SetRecNo(Value: Longint); override;
@@ -523,6 +524,7 @@ type
     function CreateBlobStream(Field: TField; Mode: TBlobStreamMode): TStream; override;
     procedure AddIndex(const AName, AFields : string; AOptions : TIndexOptions; const ADescFields: string = '';
       const ACaseInsFields: string = ''); virtual;
+    function GetNewBlobBuffer : PBlobBuffer;
 
     procedure SetDatasetPacket(AReader : TDataPacketReader);
     procedure GetDatasetPacket(AWriter : TDataPacketReader);
@@ -765,6 +767,7 @@ begin
   FIndexesCount:=0;
 
   FIndexDefs := TIndexDefs.Create(Self);
+  FAutoIncValue:=-1;
 
   SetLength(FUpdateBuffer,0);
   SetLength(FBlobBuffers,0);
@@ -1120,6 +1123,7 @@ var IndexNr : integer;
     i : integer;
 
 begin
+  FAutoIncField:=nil;
   if not Assigned(FDatasetReader) and (FileName<>'') then
     begin
     FFileStream := TFileStream.Create(FileName,fmOpenRead);
@@ -1132,14 +1136,22 @@ begin
   // reading from a stream in some other way implemented by a descendent)
   // If there are less fields then FieldDefs we know for sure that the dataset
   // is not (correctly) created.
-  if Fields.Count<FieldDefs.Count then
-    DatabaseError(SErrNoDataset);
+
+  // commented for now. If there are constant expressions in the select
+  // statement they are ftunknown, and not created.
+  // See mantis #22030
+
+  //  if Fields.Count<FieldDefs.Count then
+  //    DatabaseError(SErrNoDataset);
+
   // If there is a field with FieldNo=0 then the fields are not found to the
   // FieldDefs which is a sign that there is no dataset created. (Calculated and
-  // lookupfields have FielNo=-1)
+  // lookupfields have FieldNo=-1)
   for i := 0 to Fields.Count-1 do
     if fields[i].FieldNo=0 then
-      DatabaseError(SErrNoDataset);
+      DatabaseError(SErrNoDataset)
+    else if (FAutoIncValue>-1) and (fields[i] is TAutoIncField) and not assigned(FAutoIncField) then
+      FAutoIncField := TAutoIncField(fields[i]);
 
   InitDefaultIndexes;
   CalcRecordSize;
@@ -1211,6 +1223,8 @@ begin
   SetLength(FUpdateBlobBuffers,0);
 
   SetLength(FFieldBufPositions,0);
+
+  FAutoIncValue:=-1;
 
   if assigned(FParser) then FreeAndNil(FParser);
   FReadFromFile:=false;
@@ -2189,6 +2203,8 @@ Var ABuff        : TRecordBuffer;
     i            : integer;
     blobbuf      : tbufblobfield;
     NullMask     : pbyte;
+    li           : longint;
+    StoreReadOnly: boolean;
     ABookmark    : PBufBookmark;
 
 begin
@@ -2209,6 +2225,21 @@ begin
 
   if State = dsInsert then
     begin
+    if assigned(FAutoIncField) then
+      begin
+      li := FAutoIncValue;
+      // In principle all TAutoIncfields are read-only, but in theory it is
+      // possible to set readonly to false.
+      StoreReadOnly:=FAutoIncField.ReadOnly;
+      FAutoIncField.ReadOnly:=false;
+      try
+        FAutoIncField.SetData(@li);
+      finally
+        FAutoIncField.ReadOnly:=FAutoIncField.ReadOnly;
+      end;
+      inc(FAutoIncValue);
+      end;
+
     // The active buffer is the newly created TDataset record,
     // from which the bookmark is set to the record where the new record should be
     // inserted
@@ -2650,7 +2681,7 @@ begin
   try
     //CheckActive;
     ABookMark:=@ATBookmark;
-    FDatasetReader.StoreFieldDefs(FieldDefs);
+    FDatasetReader.StoreFieldDefs(FieldDefs,FAutoIncValue);
 
     StoreDSState:=SetTempState(dsFilter);
     ScrollResult:=FCurrentIndex.ScrollFirst;
@@ -2727,26 +2758,31 @@ begin
 end;
 
 procedure TCustomBufDataset.CreateDataset;
+var AStoreFilename: string;
+
 begin
   CheckInactive;
-  if not ((FieldCount=0) or (FieldDefs.Count=0)) then
+  if ((FieldCount=0) or (FieldDefs.Count=0)) then
     begin
-    Open;
-    Exit;
+    if (FieldDefs.Count>0) then
+      CreateFields
+    else if (fields.Count>0) then
+      begin
+      InitFieldDefsFromfields;
+      BindFields(True);
+      end
+    else
+      raise Exception.Create(SErrNoFieldsDefined);
+    FAutoIncValue:=1;
     end;
-  if (FieldDefs.Count>0) then
-    begin
-    CreateFields;
+  // When a filename is set, do not read from this file
+  AStoreFilename:=FFileName;
+  FFileName := '';
+  try
     Open;
-    end
-  else if (fields.Count>0) then
-    begin
-    InitFieldDefsFromfields;
-    BindFields(True);
-    Open;
-    end
-  else
-    raise Exception.Create(SErrNoFieldsDefined);
+  finally
+    FFileName:=AStoreFilename;
+  end;
 end;
 
 function TCustomBufDataset.BookmarkValid(ABookmark: TBookmark): Boolean;
@@ -2766,8 +2802,12 @@ end;
 procedure TCustomBufDataset.IntLoadFielddefsFromFile;
 
 begin
-  FDatasetReader.LoadFielddefs(FieldDefs);
-  if DefaultFields then CreateFields;
+  FieldDefs.Clear;
+  FDatasetReader.LoadFielddefs(FieldDefs, FAutoIncValue);
+  if DefaultFields then
+    CreateFields
+  else
+    BindFields(true);
 end;
 
 procedure TCustomBufDataset.IntLoadRecordsFromFile;
@@ -3404,7 +3444,7 @@ end;
 
 const FpcBinaryIdent = 'BinBufDataset';
 
-procedure TFpcBinaryDatapacketReader.LoadFieldDefs(AFieldDefs: TFieldDefs);
+procedure TFpcBinaryDatapacketReader.LoadFieldDefs(AFieldDefs: TFieldDefs; var AnAutoIncValue: integer);
 
 var FldCount : word;
     i        : integer;
@@ -3425,9 +3465,11 @@ begin
     if Stream.ReadByte = 1 then
       Attributes := Attributes + [faReadonly];
     end;
+  Stream.ReadBuffer(i,sizeof(i));
+  AnAutoIncValue := i;
 end;
 
-procedure TFpcBinaryDatapacketReader.StoreFieldDefs(AFieldDefs: TFieldDefs);
+procedure TFpcBinaryDatapacketReader.StoreFieldDefs(AFieldDefs: TFieldDefs; AnAutoIncValue: integer);
 var i : integer;
 begin
   Stream.Write(FpcBinaryIdent[1],length(FpcBinaryIdent));
@@ -3445,6 +3487,8 @@ begin
     else
       Stream.WriteByte(0);
     end;
+  i := AnAutoIncValue;
+  Stream.WriteBuffer(i,sizeof(i));
 end;
 
 function TFpcBinaryDatapacketReader.GetRecordRowState(out AUpdOrder : Integer) : TRowState;

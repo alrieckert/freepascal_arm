@@ -36,11 +36,13 @@ resourcestring
   SParserExpectedCommaRBracket = 'Expected "," or ")"';
   SParserExpectedCommaSemicolon = 'Expected "," or ";"';
   SParserExpectedCommaColon = 'Expected "," or ":"';
+  SParserOnlyOneArgumentCanHaveDefault = 'A default value can only be assigned to 1 parameter';
   SParserExpectedLBracketColon = 'Expected "(" or ":"';
   SParserExpectedLBracketSemicolon = 'Expected "(" or ";"';
   SParserExpectedColonSemicolon = 'Expected ":" or ";"';
   SParserExpectedSemiColonEnd = 'Expected ";" or "End"';
   SParserExpectedConstVarID = 'Expected "const", "var" or identifier';
+  SParserExpectedNested = 'Expected nested keyword';
   SParserExpectedColonID = 'Expected ":" or identifier';
   SParserSyntaxError = 'Syntax error';
   SParserTypeSyntaxError = 'Syntax error in type';
@@ -54,6 +56,7 @@ resourcestring
 
   SLogStartImplementation = 'Start parsing implementation section.';
   SLogStartInterface = 'Start parsing interface section';
+  SParsingUsedUnit = 'Parsing used unit "%s" with commandLine "%s"';
 
 type
   TPasParserLogHandler = Procedure (Sender : TObject; Const Msg : String) of object;
@@ -656,7 +659,17 @@ begin
     NextToken;
     Found:=IsCurTokenHint(h);
     If Found then
-      Include(Result,h)
+      begin
+      Include(Result,h);
+      if (h=hDeprecated) then
+        begin
+        NextToken;
+        if (Curtoken<>tkString) then
+          UnGetToken
+        else
+          Element.HintMessage:=CurTokenString;
+        end;
+      end;
   Until Not Found;
   UnGetToken;
   If Assigned(Element) then
@@ -2323,79 +2336,101 @@ procedure TPasParser.ParseArgList(Parent: TPasElement; Args: TFPList; EndToken: 
 var
   ArgNames: TStringList;
   IsUntyped: Boolean;
-  Name, Value: String;
+  Name : String;
+  Value : TPasExpr;
   i: Integer;
   Arg: TPasArgument;
   Access: TArgumentAccess;
   ArgType: TPasType;
 begin
-  while True do
-  begin
-    ArgNames := TStringList.Create;
-    Access := argDefault;
-    IsUntyped := False;
-    ArgType := nil;
+  ArgNames := TStringList.Create;
+  try
     while True do
     begin
-      NextToken;
-      if CurToken = tkConst then
+      ArgNames.Clear;
+      Access := argDefault;
+      IsUntyped := False;
+      ArgType := nil;
+      while True do
       begin
-        Access := argConst;
-        Name := ExpectIdentifier;
-      end else if CurToken = tkVar then
-      begin
-        Access := ArgVar;
-        Name := ExpectIdentifier;
-      end else if (CurToken = tkIdentifier) and (UpperCase(CurTokenString) = 'OUT') then
-      begin
-        Access := ArgOut;
-        Name := ExpectIdentifier;
-      end else if CurToken = tkIdentifier then
-        Name := CurTokenString
-      else
-        ParseExc(SParserExpectedConstVarID);
-      ArgNames.Add(Name);
-      NextToken;
-      if CurToken = tkColon then
-        break
-      else if ((CurToken = tkSemicolon) or (CurToken = tkBraceClose)) and
-        (Access <> argDefault) then
-      begin
-        // found an untyped const or var argument
-        UngetToken;
-        IsUntyped := True;
-        break
-      end
-      else if CurToken <> tkComma then
-        ParseExc(SParserExpectedCommaColon);
-    end;
-    SetLength(Value, 0);
-    if not IsUntyped then
-    begin
-      ArgType := ParseType(nil);
-      NextToken;
-      if CurToken = tkEqual then
-      begin
-        Value := ParseExpression(Parent);
-      end else
-        UngetToken;
-    end;
+        NextToken;
+        if CurToken = tkConst then
+        begin
+          Access := argConst;
+          Name := ExpectIdentifier;
+        end else if CurToken = tkConstRef then
+        begin
+          Access := argConstref;
+          Name := ExpectIdentifier;
+        end else if CurToken = tkVar then
+        begin
+          Access := ArgVar;
+          Name := ExpectIdentifier;
+        end else if (CurToken = tkIdentifier) and (UpperCase(CurTokenString) = 'OUT') then
+        begin
+          Access := ArgOut;
+          Name := ExpectIdentifier;
+        end else if CurToken = tkIdentifier then
+          Name := CurTokenString
+        else
+          ParseExc(SParserExpectedConstVarID);
+        ArgNames.Add(Name);
+        NextToken;
+        if CurToken = tkColon then
+          break
+        else if ((CurToken = tkSemicolon) or (CurToken = tkBraceClose)) and
+          (Access <> argDefault) then
+        begin
+          // found an untyped const or var argument
+          UngetToken;
+          IsUntyped := True;
+          break
+        end
+        else if CurToken <> tkComma then
+          ParseExc(SParserExpectedCommaColon);
+      end;
+      Value:=Nil;
+      if not IsUntyped then
+        begin
+        ArgType := ParseType(nil);
+        try
+          NextToken;
+          if CurToken = tkEqual then
+            begin
+            if (ArgNames.Count>1) then
+              begin
+              FreeAndNil(ArgType);
+              ParseExc(SParserOnlyOneArgumentCanHaveDefault);
+              end;
+            NextToken;
+            Value := DoParseExpression(Parent,Nil);
+            // After this, we're on ), which must be unget.
+            end;
+          UngetToken;
+        except
+          FreeAndNil(ArgType);
+          Raise;
+        end;
+        end;
 
-    for i := 0 to ArgNames.Count - 1 do
-    begin
-      Arg := TPasArgument(CreateElement(TPasArgument, ArgNames[i], Parent));
-      Arg.Access := Access;
-      Arg.ArgType := ArgType;
-      if (i > 0) and Assigned(ArgType) then
-        ArgType.AddRef;
-      Arg.Value := Value;
-      Args.Add(Arg);
-    end;
+      for i := 0 to ArgNames.Count - 1 do
+      begin
+        Arg := TPasArgument(CreateElement(TPasArgument, ArgNames[i], Parent));
+        Arg.Access := Access;
+        Arg.ArgType := ArgType;
+        if (i > 0) and Assigned(ArgType) then
+          ArgType.AddRef;
+        Arg.ValueExpr := Value;
+        Value:=Nil; // Only the first gets a value. OK, since Var A,B : Integer = 1 is not allowed.
+        Args.Add(Arg);
+      end;
 
+      NextToken;
+      if CurToken = EndToken then
+        break;
+    end;
+  finally
     ArgNames.Free;
-    NextToken;
-    if CurToken = EndToken then
-      break;
   end;
 end;
 
@@ -2458,7 +2493,7 @@ begin
       begin
       NextToken;
       if (CurToken = tkSemicolon) or IsCurtokenHint
-        or (OfObjectPossible and (CurToken in [tkOf,tkEqual]))
+        or (OfObjectPossible and (CurToken in [tkOf,tkis,tkEqual]))
       then
         UngetToken
       else
@@ -2483,15 +2518,25 @@ begin
           ParseType(nil);
       end;
   end;
-
-  NextToken;
-  if OfObjectPossible and (CurToken = tkOf) then
-  begin
-    ExpectToken(tkObject);
-    Element.IsOfObject := True;
-  end else
-    UngetToken;
-
+  
+  if OfObjectPossible then
+    begin
+    NextToken;
+    if (curToken =tkOf) then
+      begin
+      ExpectToken(tkObject);
+      Element.IsOfObject := True;
+      end 
+    else if (curToken = tkIs) then
+      begin
+      expectToken(tkIdentifier);
+      if (lowerCase(CurTokenString)<>'nested') then
+        ParseExc(SParserExpectedNested);
+      Element.isNested:=True;
+      end
+    else
+      UnGetToken;  
+    end;  
   NextToken;
   if CurToken = tkEqual then
   begin
@@ -2567,6 +2612,14 @@ begin
       if IsCurTokenHint(ahint) then  // deprecated,platform,experimental,library, unimplemented etc
         begin
         element.hints:=element.hints+[ahint];
+        if aHint=hDeprecated then
+          begin
+          nextToken;
+          if (CurToken<>tkString) then
+            UnGetToken
+          else
+            element.HintMessage:=curtokenstring;
+          end;  
         consumesemi;
         end
       else if (tok = 'PUBLIC') then

@@ -155,6 +155,15 @@ program fpc;
      ppcbin:='ppcx64';
      processorname:='x86_64';
 {$endif x86_64}
+{$ifdef mipsel}
+     ppcbin:='ppcmipsel';
+     processorname:='mipsel';
+{$else : not mipsel}
+  {$ifdef mips}
+     ppcbin:='ppcmips';
+     processorname:='mips';
+  {$endif mips}
+{$endif not mipsel}
      versionstr:='';                      { Default is just the name }
      if ParamCount = 0 then
        begin

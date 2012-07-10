@@ -174,9 +174,16 @@ interface
           procedure stoprecordtokens;
           procedure replaytoken;
           procedure startreplaytokens(buf:tdynamicarray; achange_endian : boolean);
-          { bit length sizeint is target depend }
-          procedure tokenwritesizeint(val : sizeint);
-          function  tokenreadsizeint : sizeint;
+          { bit length asizeint is target depend }
+          procedure tokenwritesizeint(val : asizeint);
+          procedure tokenwritelongint(val : longint);
+          procedure tokenwritelongword(val : longword);
+          procedure tokenwriteword(val : word);
+          procedure tokenwriteshortint(val : shortint);
+          procedure tokenwriteset(var b;size : longint);
+          procedure tokenwriteenum(var b;size : longint);
+          function  tokenreadsizeint : asizeint;
+          procedure tokenwritesettings(var asettings : tsettings; var size : asizeint);
           { longword/longint are 32 bits on all targets }
           { word/smallint are 16-bits on all targest }
           function  tokenreadlongword : longword;
@@ -190,7 +197,7 @@ interface
           procedure tokenreadset(var b;size : longint);
           function  tokenreadenum(size : longint) : longword;
 
-          procedure tokenreadsettings(var asettings : tsettings; expected_size : longint);
+          procedure tokenreadsettings(var asettings : tsettings; expected_size : asizeint);
           procedure readchar;
           procedure readstring;
           procedure readnumber;
@@ -2177,16 +2184,36 @@ In case not, the value returned can be arbitrary.
         recordtokenbuf.write(b,1);
       end;
 
-    procedure tscannerfile.tokenwritesizeint(val : sizeint);
+    procedure tscannerfile.tokenwritesizeint(val : asizeint);
       begin
-        recordtokenbuf.write(val,sizeof(sizeint));
+        recordtokenbuf.write(val,sizeof(asizeint));
       end;
 
-    function tscannerfile.tokenreadsizeint : sizeint;
-      var
-        val : sizeint;
+    procedure tscannerfile.tokenwritelongint(val : longint);
       begin
-        replaytokenbuf.read(val,sizeof(sizeint));
+        recordtokenbuf.write(val,sizeof(longint));
+      end;
+
+    procedure tscannerfile.tokenwriteshortint(val : shortint);
+      begin
+        recordtokenbuf.write(val,sizeof(shortint));
+      end;
+
+    procedure tscannerfile.tokenwriteword(val : word);
+      begin
+        recordtokenbuf.write(val,sizeof(word));
+      end;
+
+    procedure tscannerfile.tokenwritelongword(val : longword);
+      begin
+        recordtokenbuf.write(val,sizeof(longword));
+      end;
+
+    function tscannerfile.tokenreadsizeint : asizeint;
+      var
+        val : asizeint;
+      begin
+        replaytokenbuf.read(val,sizeof(asizeint));
         if tokenbuf_change_endian then
           val:=swapendian(val);
         result:=val;
@@ -2268,8 +2295,18 @@ In case not, the value returned can be arbitrary.
          Pbyte(@b)[i]:=reverse_byte(Pbyte(@b)[i]);
    end;
 
+   procedure tscannerfile.tokenwriteenum(var b;size : longint);
+   begin
+     recordtokenbuf.write(b,size);
+   end;
 
-    procedure tscannerfile.tokenreadsettings(var asettings : tsettings; expected_size : longint);
+   procedure tscannerfile.tokenwriteset(var b;size : longint);
+   begin
+     recordtokenbuf.write(b,size);
+   end;
+
+
+    procedure tscannerfile.tokenreadsettings(var asettings : tsettings; expected_size : asizeint);
 
     {    This procedure
        needs to be changed whenever
@@ -2337,12 +2374,84 @@ In case not, the value returned can be arbitrary.
          end;
      end;
 
+    procedure tscannerfile.tokenwritesettings(var asettings : tsettings; var size : asizeint);
+
+    {    This procedure
+       needs to be changed whenever
+       globals.tsettings type is changed,
+       the problem is that no error will appear
+       before tests with generics are tested. PM }
+
+       var
+         sizepos, startpos, endpos : longword;
+      begin
+        { WARNING all those fields need to be in the correct
+        order otherwise cross_endian PPU reading will fail }
+        sizepos:=recordtokenbuf.pos;
+        size:=0;
+        tokenwritesizeint(size);
+        startpos:=recordtokenbuf.pos;
+        with asettings do
+          begin
+            tokenwritelongint(alignment.procalign);
+            tokenwritelongint(alignment.loopalign);
+            tokenwritelongint(alignment.jumpalign);
+            tokenwritelongint(alignment.constalignmin);
+            tokenwritelongint(alignment.constalignmax);
+            tokenwritelongint(alignment.varalignmin);
+            tokenwritelongint(alignment.varalignmax);
+            tokenwritelongint(alignment.localalignmin);
+            tokenwritelongint(alignment.localalignmax);
+            tokenwritelongint(alignment.recordalignmin);
+            tokenwritelongint(alignment.recordalignmax);
+            tokenwritelongint(alignment.maxCrecordalign);
+            tokenwriteset(globalswitches,sizeof(globalswitches));
+            tokenwriteset(targetswitches,sizeof(targetswitches));
+            tokenwriteset(moduleswitches,sizeof(moduleswitches));
+            tokenwriteset(localswitches,sizeof(localswitches));
+            tokenwriteset(modeswitches,sizeof(modeswitches));
+            tokenwriteset(optimizerswitches,sizeof(optimizerswitches));
+            tokenwriteset(genwpoptimizerswitches,sizeof(genwpoptimizerswitches));
+            tokenwriteset(dowpoptimizerswitches,sizeof(dowpoptimizerswitches));
+            tokenwriteset(debugswitches,sizeof(debugswitches));
+            { 0: old behaviour for sets <=256 elements
+              >0: round to this size }
+            tokenwriteshortint(setalloc);
+            tokenwriteshortint(packenum);
+            tokenwriteshortint(packrecords);
+            tokenwriteshortint(maxfpuregisters);
+
+            tokenwriteenum(cputype,sizeof(tcputype));
+            tokenwriteenum(optimizecputype,sizeof(tcputype));
+            tokenwriteenum(fputype,sizeof(tfputype));
+            tokenwriteenum(asmmode,sizeof(tasmmode));
+            tokenwriteenum(interfacetype,sizeof(tinterfacetypes));
+            tokenwriteenum(defproccall,sizeof(tproccalloption));
+            { tstringencoding is word type,
+              thus this should be OK here }
+            tokenwriteword(sourcecodepage);
+
+            tokenwriteenum(minfpconstprec,sizeof(tfloattype));
+
+            recordtokenbuf.write(byte(disabledircache),1);
+{$if defined(ARM) or defined(AVR)}
+            tokenwriteenum(controllertype,sizeof(tcontrollertype));
+{$endif defined(ARM) or defined(AVR)}
+           endpos:=recordtokenbuf.pos;
+           size:=endpos-startpos;
+           recordtokenbuf.seek(sizepos);
+           tokenwritesizeint(size);
+           recordtokenbuf.seek(endpos);
+         end;
+     end;
+
 
     procedure tscannerfile.recordtoken;
       var
         t : ttoken;
         s : tspecialgenerictoken;
-        len,val,msgnb,copy_size : sizeint;
+        len,msgnb,copy_size : asizeint;
+        val : longint;
         b : byte;
         pmsg : pmessagestaterecord;
       begin
@@ -2360,8 +2469,7 @@ In case not, the value returned can be arbitrary.
             writetoken(t);
             recordtokenbuf.write(s,1);
             copy_size:=sizeof(current_settings)-sizeof(pointer);
-            tokenwritesizeint(copy_size);
-            recordtokenbuf.write(current_settings,copy_size);
+            tokenwritesettings(current_settings,copy_size);
             last_settings:=current_settings;
           end;
 
@@ -2375,7 +2483,7 @@ In case not, the value returned can be arbitrary.
             pmsg:=current_settings.pmessage;
             while assigned(pmsg) do
               begin
-                if msgnb=high(sizeint) then
+                if msgnb=high(asizeint) then
                   { Too many messages }
                   internalerror(2011090401);
                 inc(msgnb);
@@ -2385,11 +2493,12 @@ In case not, the value returned can be arbitrary.
             pmsg:=current_settings.pmessage;
             while assigned(pmsg) do
               begin
-                { What about endianess here? }
+                { What about endianess here?}
+                { SB: this is handled by tokenreadlongint }
                 val:=pmsg^.value;
-                tokenwritesizeint(val);
+                tokenwritelongint(val);
                 val:=ord(pmsg^.state);
-                tokenwritesizeint(val);
+                tokenwritelongint(val);
                 pmsg:=pmsg^.next;
               end;
             last_message:=current_settings.pmessage;
@@ -2506,7 +2615,7 @@ In case not, the value returned can be arbitrary.
 
     procedure tscannerfile.replaytoken;
       var
-        wlen,mesgnb,copy_size : sizeint;
+        wlen,mesgnb,copy_size : asizeint;
         specialtoken : tspecialgenerictoken;
         i : byte;
         pmsg,prevmsg : pmessagestaterecord;
@@ -2575,11 +2684,6 @@ In case not, the value returned can be arbitrary.
                 if (ord(specialtoken) and $80)<>0 then
                   begin
                       current_tokenpos.column:=ord(specialtoken) and $7f;
-
-                      { don't generate invalid line info if no sources are available for the current module }
-                      if not(get_module(current_filepos.moduleindex).sources_avail) then
-                        current_tokenpos.column:=0;
-
                       current_filepos:=current_tokenpos;
                   end
                 else
@@ -2587,8 +2691,8 @@ In case not, the value returned can be arbitrary.
                     ST_LOADSETTINGS:
                       begin
                         copy_size:=tokenreadsizeint;
-                        if copy_size <> sizeof(current_settings)-sizeof(pointer) then
-                          internalerror(2011090501);
+                        //if copy_size <> sizeof(current_settings)-sizeof(pointer) then
+                        //  internalerror(2011090501);
                         {
                         replaytokenbuf.read(current_settings,copy_size);
                         }
@@ -2610,8 +2714,8 @@ In case not, the value returned can be arbitrary.
                               end
                             else
                               prevmsg^.next:=pmsg;
-                            replaytokenbuf.read(pmsg^.value,sizeof(longint));
-                            replaytokenbuf.read(pmsg^.state,sizeof(tmsgstate));
+                            pmsg^.value:=tokenreadlongint;
+                            pmsg^.state:=tmsgstate(tokenreadlongint);
                             pmsg^.next:=nil;
                             prevmsg:=pmsg;
                           end;
@@ -2619,32 +2723,16 @@ In case not, the value returned can be arbitrary.
                     ST_LINE:
                       begin
                         current_tokenpos.line:=tokenreadlongint;
-
-                        { don't generate invalid line info if no sources are available for the current module }
-                        if not(get_module(current_filepos.moduleindex).sources_avail) then
-                          current_tokenpos.line:=0;
-
                         current_filepos:=current_tokenpos;
                       end;
                     ST_COLUMN:
                       begin
                         current_tokenpos.column:=tokenreadword;
-                        { don't generate invalid line info if no sources are available for the current module }
-                        if not(get_module(current_filepos.moduleindex).sources_avail) then
-                          current_tokenpos.column:=0;
-
                         current_filepos:=current_tokenpos;
                       end;
                     ST_FILEINDEX:
                       begin
                         current_tokenpos.fileindex:=tokenreadword;
-                        { don't generate invalid line info if no sources are available for the current module }
-                        if not(get_module(current_filepos.moduleindex).sources_avail) then
-                          begin
-                            current_tokenpos.column:=0;
-                            current_tokenpos.line:=0;
-                          end;
-
                         current_filepos:=current_tokenpos;
                       end;
                     else

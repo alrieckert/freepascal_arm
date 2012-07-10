@@ -150,7 +150,7 @@ unit hlcg2ll;
              @param(tosize type of the pointer that we get as a result)
              @param(r reference to get address from)
           }
-          procedure a_loadaddr_ref_cgpara(list : TAsmList;fromsize, tosize : tdef;const r : treference;const cgpara : TCGPara);override;
+          procedure a_loadaddr_ref_cgpara(list : TAsmList;fromsize : tdef;const r : treference;const cgpara : TCGPara);override;
 
           procedure a_call_name(list : TAsmList;pd : tprocdef;const s : TSymStr; weak: boolean);override;
           procedure a_call_reg(list : TAsmList;pd : tabstractprocdef;reg : tregister);override;
@@ -278,21 +278,6 @@ unit hlcg2ll;
 
           }
           procedure g_concatcopy_unaligned(list : TAsmList;size: tdef; const source,dest : treference);override;
-          {# This should emit the opcode to a shortrstring from the source
-             to destination.
-
-             @param(source Source reference of copy)
-             @param(dest Destination reference of copy)
-
-          }
-          procedure g_copyshortstring(list : TAsmList;const source,dest : treference;strdef:tstringdef);override;
-          procedure g_copyvariant(list : TAsmList;const source,dest : treference;vardef:tvariantdef);override;
-
-          procedure g_incrrefcount(list : TAsmList;t: tdef; const ref: treference);override;
-          procedure g_array_rtti_helper(list: TAsmList; t: tdef; const ref: treference; const highloc: tlocation;
-            const name: string);override;
-          procedure g_initialize(list : TAsmList;t : tdef;const ref : treference);override;
-          procedure g_finalize(list : TAsmList;t : tdef;const ref : treference);override;
 
           {# Generates overflow checking code for a node }
           procedure g_overflowcheck(list: TAsmList; const Loc:tlocation; def:tdef); override;
@@ -470,7 +455,7 @@ implementation
       cg.a_load_loc_cgpara(list,l,cgpara);
     end;
 
-  procedure thlcg2ll.a_loadaddr_ref_cgpara(list: TAsmList; fromsize, tosize: tdef; const r: treference; const cgpara: TCGPara);
+  procedure thlcg2ll.a_loadaddr_ref_cgpara(list: TAsmList; fromsize: tdef; const r: treference; const cgpara: TCGPara);
     begin
       cg.a_loadaddr_ref_cgpara(list,r,cgpara);
     end;
@@ -941,36 +926,6 @@ implementation
   procedure thlcg2ll.g_concatcopy_unaligned(list: TAsmList; size: tdef; const source, dest: treference);
     begin
       cg.g_concatcopy_unaligned(list,source,dest,size.size);
-    end;
-
-  procedure thlcg2ll.g_copyshortstring(list: TAsmList; const source, dest: treference; strdef: tstringdef);
-    begin
-      cg.g_copyshortstring(list,source,dest,strdef.len);
-    end;
-
-  procedure thlcg2ll.g_copyvariant(list: TAsmList; const source, dest: treference; vardef: tvariantdef);
-    begin
-      cg.g_copyvariant(list,source,dest);
-    end;
-
-  procedure thlcg2ll.g_incrrefcount(list: TAsmList; t: tdef; const ref: treference);
-    begin
-      cg.g_incrrefcount(list,t,ref);
-    end;
-
-  procedure thlcg2ll.g_array_rtti_helper(list: TAsmList; t: tdef; const ref: treference; const highloc: tlocation; const name: string);
-    begin
-      cg.g_array_rtti_helper(list, t, ref, highloc, name);
-    end;
-
-  procedure thlcg2ll.g_initialize(list: TAsmList; t: tdef; const ref: treference);
-    begin
-      cg.g_initialize(list,t,ref);
-    end;
-
-  procedure thlcg2ll.g_finalize(list: TAsmList; t: tdef; const ref: treference);
-    begin
-      cg.g_finalize(list,t,ref);
     end;
 
   procedure thlcg2ll.g_overflowcheck(list: TAsmList; const Loc: tlocation; def: tdef);

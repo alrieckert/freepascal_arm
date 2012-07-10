@@ -644,7 +644,7 @@ Function  Random: extended;
 Procedure Randomize;
 {$endif FPC_HAS_FEATURE_RANDOM}
 
-{$ifdef FPC_HAS_INTERNAL_ABS_LONG and (defined(cpui386) or defined(cpux86_64) or defined(cpupowerpc))}
+{$ifdef FPC_HAS_INTERNAL_ABS_LONG}
 {$define FPC_SYSTEM_HAS_ABS_LONGINT}
 Function abs(l:longint):longint;[internproc:fpc_in_abs_long];
 {$else FPC_HAS_INTERNAL_ABS_LONG}
@@ -1059,15 +1059,18 @@ Procedure getdir(drivenr:byte;var dir:ansistring);
 //function get_frame:pointer;[INTERNPROC:fpc_in_get_frame];
 (*
 // still defined externally
-function get_caller_addr(framebp:pointer):pointer;[INTERNPROC:fpc_in_get_caller_addr];
-function get_caller_frame(framebp:pointer):pointer;[INTERNPROC:fpc_in_get_caller_frame];
+function get_caller_addr(framebp:pointer;addr:pointer=nil):pointer;[INTERNPROC:fpc_in_get_caller_addr];
+function get_caller_frame(framebp:pointer;addr:pointer=nil):pointer;[INTERNPROC:fpc_in_get_caller_frame];
 *)
 {$ELSE}
 function get_frame:pointer;{$ifdef SYSTEMINLINE}inline;{$endif}
 {$ENDIF}
 
-function get_caller_addr(framebp:pointer):pointer;
-function get_caller_frame(framebp:pointer):pointer;
+Function Get_pc_addr : Pointer;
+
+function get_caller_addr(framebp:pointer;addr:pointer=nil):pointer;
+function get_caller_frame(framebp:pointer;addr:pointer=nil):pointer;
+procedure get_caller_stackinfo(var framebp,addr : pointer);
 
 Function IOResult:Word;
 Function Sptr:Pointer;[internconst:fpc_in_const_ptr];
@@ -1149,7 +1152,7 @@ Function  Paramcount:Longint;
 Function  ParamStr(l:Longint):string;
 {$endif FPC_HAS_FEATURE_COMMANDARGS}
 
-Procedure Dump_Stack(var f : text;bp:pointer);
+Procedure Dump_Stack(var f : text;bp:pointer;addr : pointer = nil);
 {$ifdef FPC_HAS_FEATURE_EXCEPTIONS}
 procedure DumpExceptionBackTrace(var f:text);
 {$endif FPC_HAS_FEATURE_EXCEPTIONS}

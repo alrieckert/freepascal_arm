@@ -77,6 +77,16 @@ unit hlcgobj;
            the cpu specific child cg object have such a method?}
 
           function  uses_registers(rt:Tregistertype):boolean; inline;
+          {# Get a specific register.}
+          procedure getcpuregister(list:TAsmList;r:Tregister);virtual;
+          procedure ungetcpuregister(list:TAsmList;r:Tregister);virtual;
+          {# Get multiple registers specified.}
+          procedure alloccpuregisters(list:TAsmList;rt:Tregistertype;const r:Tcpuregisterset);virtual;
+          {# Free multiple registers specified.}
+          procedure dealloccpuregisters(list:TAsmList;rt:Tregistertype;const r:Tcpuregisterset);virtual;
+
+          procedure allocallcpuregisters(list:TAsmList);virtual;
+          procedure deallocallcpuregisters(list:TAsmList);virtual;
 
           procedure do_register_allocation(list:TAsmList;headertai:tai); inline;
           procedure translate_register(var reg : tregister); inline;
@@ -161,7 +171,7 @@ unit hlcgobj;
              @param(tosize type of the pointer that we get as a result)
              @param(r reference to get address from)
           }
-          procedure a_loadaddr_ref_cgpara(list : TAsmList;fromsize, tosize : tdef;const r : treference;const cgpara : TCGPara);virtual;
+          procedure a_loadaddr_ref_cgpara(list : TAsmList;fromsize : tdef;const r : treference;const cgpara : TCGPara);virtual;
 
           { Remarks:
             * If a method specifies a size you have only to take care
@@ -385,14 +395,14 @@ unit hlcgobj;
              @param(dest Destination reference of copy)
 
           }
-          procedure g_copyshortstring(list : TAsmList;const source,dest : treference;strdef:tstringdef);virtual;abstract;
-          procedure g_copyvariant(list : TAsmList;const source,dest : treference;vardef:tvariantdef);virtual;abstract;
+          procedure g_copyshortstring(list : TAsmList;const source,dest : treference;strdef:tstringdef);virtual;
+          procedure g_copyvariant(list : TAsmList;const source,dest : treference;vardef:tvariantdef);virtual;
 
-          procedure g_incrrefcount(list : TAsmList;t: tdef; const ref: treference);virtual;abstract;
-          procedure g_initialize(list : TAsmList;t : tdef;const ref : treference);virtual;abstract;
-          procedure g_finalize(list : TAsmList;t : tdef;const ref : treference);virtual;abstract;
+          procedure g_incrrefcount(list : TAsmList;t: tdef; const ref: treference);virtual;
+          procedure g_initialize(list : TAsmList;t : tdef;const ref : treference);virtual;
+          procedure g_finalize(list : TAsmList;t : tdef;const ref : treference);virtual;
           procedure g_array_rtti_helper(list: TAsmList; t: tdef; const ref: treference; const highloc: tlocation;
-            const name: string);virtual;abstract;
+            const name: string);virtual;
 
           {# Generates range checking code. It is to note
              that this routine does not need to be overridden,
@@ -543,7 +553,7 @@ implementation
        fmodule,export,
        verbose,defutil,paramgr,
        symbase,symsym,symtable,
-       ncon,nld,pass_1,pass_2,
+       ncon,nld,ncgrtti,pass_1,pass_2,
        cpuinfo,cgobj,tgobj,cutils,procinfo,
        ncgutil,ngenutil;
 
@@ -622,6 +632,36 @@ implementation
   function thlcgobj.uses_registers(rt: Tregistertype): boolean;
     begin
        result:=cg.uses_registers(rt);
+    end;
+
+  procedure thlcgobj.getcpuregister(list: TAsmList; r: Tregister);
+    begin
+      cg.getcpuregister(list,r);
+    end;
+
+  procedure thlcgobj.ungetcpuregister(list: TAsmList; r: Tregister);
+    begin
+      cg.ungetcpuregister(list,r);
+    end;
+
+  procedure thlcgobj.alloccpuregisters(list: TAsmList; rt: Tregistertype; const r: Tcpuregisterset);
+    begin
+      cg.alloccpuregisters(list,rt,r);
+    end;
+
+  procedure thlcgobj.dealloccpuregisters(list: TAsmList; rt: Tregistertype; const r: Tcpuregisterset);
+    begin
+      cg.dealloccpuregisters(list,rt,r);
+    end;
+
+  procedure thlcgobj.allocallcpuregisters(list: TAsmList);
+    begin
+      cg.allocallcpuregisters(list);
+    end;
+
+  procedure thlcgobj.deallocallcpuregisters(list: TAsmList);
+    begin
+      cg.deallocallcpuregisters(list);
     end;
 
   procedure thlcgobj.do_register_allocation(list: TAsmList; headertai: tai);
@@ -731,8 +771,8 @@ implementation
          LOC_FPUREGISTER,LOC_CFPUREGISTER:
            begin
              tg.gethltemp(list,size,size.size,tt_normal,ref);
-             a_load_reg_ref(list,size,size,r,ref);
-             a_loadfpu_ref_cgpara(list,size,ref,cgpara);
+             a_load_reg_ref(list,size,cgpara.def,r,ref);
+             a_loadfpu_ref_cgpara(list,cgpara.def,ref,cgpara);
              tg.ungettemp(list,ref);
            end
          else
@@ -810,7 +850,7 @@ implementation
       end;
     end;
 
-  procedure thlcgobj.a_loadaddr_ref_cgpara(list: TAsmList; fromsize, tosize: tdef; const r: treference; const cgpara: TCGPara);
+  procedure thlcgobj.a_loadaddr_ref_cgpara(list: TAsmList; fromsize: tdef; const r: treference; const cgpara: TCGPara);
     var
        hr : tregister;
     begin
@@ -818,13 +858,13 @@ implementation
        if cgpara.location^.loc in [LOC_CREGISTER,LOC_REGISTER] then
          begin
            paramanager.allocparaloc(list,cgpara.location);
-           a_loadaddr_ref_reg(list,fromsize,tosize,r,cgpara.location^.register)
+           a_loadaddr_ref_reg(list,fromsize,cgpara.def,r,cgpara.location^.register)
          end
        else
          begin
-           hr:=getaddressregister(list,tosize);
-           a_loadaddr_ref_reg(list,fromsize,tosize,r,hr);
-           a_load_reg_cgpara(list,tosize,hr,cgpara);
+           hr:=getaddressregister(list,cgpara.def);
+           a_loadaddr_ref_reg(list,fromsize,cgpara.def,r,hr);
+           a_load_reg_cgpara(list,cgpara.def,hr,cgpara);
          end;
     end;
 
@@ -1039,7 +1079,7 @@ implementation
     var
       fromsubsetregdef,
       tosubsetregdef: torddef;
-      tmpreg: tregister;
+      tmpreg, tmpreg2: tregister;
       bitmask: aword;
       stopbit: byte;
     begin
@@ -1047,12 +1087,22 @@ implementation
         begin
           fromsubsetregdef:=tcgsize2orddef(fromsreg.subsetregsize);
           tosubsetregdef:=tcgsize2orddef(tosreg.subsetregsize);
-          tmpreg:=getintregister(list,tosubsetregdef);
-          a_load_reg_reg(list,fromsubsetregdef,tosubsetregdef,fromsreg.subsetreg,tmpreg);
           if (fromsreg.startbit<=tosreg.startbit) then
-            a_op_const_reg(list,OP_SHL,tosubsetregdef,tosreg.startbit-fromsreg.startbit,tmpreg)
+            begin
+              { tosreg may be larger -> use its size to perform the shift }
+              tmpreg:=getintregister(list,tosubsetregdef);
+              a_load_reg_reg(list,fromsubsetregdef,tosubsetregdef,fromsreg.subsetreg,tmpreg);
+              a_op_const_reg(list,OP_SHL,tosubsetregdef,tosreg.startbit-fromsreg.startbit,tmpreg)
+            end
           else
-            a_op_const_reg(list,OP_SHR,tosubsetregdef,fromsreg.startbit-tosreg.startbit,tmpreg);
+            begin
+              { fromsreg may be larger -> use its size to perform the shift }
+              tmpreg:=getintregister(list,fromsubsetregdef);
+              a_op_const_reg_reg(list,OP_SHR,fromsubsetregdef,fromsreg.startbit-tosreg.startbit,fromsreg.subsetreg,tmpreg);
+              tmpreg2:=getintregister(list,tosubsetregdef);
+              a_load_reg_reg(list,fromsubsetregdef,tosubsetregdef,tmpreg,tmpreg2);
+              tmpreg:=tmpreg2;
+            end;
           stopbit:=tosreg.startbit + tosreg.bitlen;
           // on x86(64), 1 shl 32(64) = 1 instead of 0
           if (stopbit<>AIntBits) then
@@ -2724,6 +2774,235 @@ implementation
       g_concatcopy(list,size,source,dest);
     end;
 
+  procedure thlcgobj.g_copyshortstring(list: TAsmList; const source, dest: treference; strdef: tstringdef);
+    var
+      cgpara1,cgpara2,cgpara3 : TCGPara;
+    begin
+      cgpara1.init;
+      cgpara2.init;
+      cgpara3.init;
+      paramanager.getintparaloc(pocall_default,1,voidpointertype,cgpara1);
+      paramanager.getintparaloc(pocall_default,2,voidpointertype,cgpara2);
+      paramanager.getintparaloc(pocall_default,3,s32inttype,cgpara3);
+      a_loadaddr_ref_cgpara(list,strdef,dest,cgpara3);
+      a_loadaddr_ref_cgpara(list,strdef,source,cgpara2);
+      a_load_const_cgpara(list,s32inttype,strdef.len,cgpara1);
+      paramanager.freecgpara(list,cgpara3);
+      paramanager.freecgpara(list,cgpara2);
+      paramanager.freecgpara(list,cgpara1);
+      g_call_system_proc(list,'fpc_shortstr_assign');
+      cgpara3.done;
+      cgpara2.done;
+      cgpara1.done;
+    end;
+
+  procedure thlcgobj.g_copyvariant(list: TAsmList; const source, dest: treference; vardef: tvariantdef);
+    var
+      cgpara1,cgpara2 : TCGPara;
+      pvardata : tdef;
+    begin
+      cgpara1.init;
+      cgpara2.init;
+      pvardata:=getpointerdef(search_system_type('TVARDATA').typedef);
+      paramanager.getintparaloc(pocall_default,1,pvardata,cgpara1);
+      paramanager.getintparaloc(pocall_default,2,pvardata,cgpara2);
+      a_loadaddr_ref_cgpara(list,vardef,dest,cgpara2);
+      a_loadaddr_ref_cgpara(list,vardef,source,cgpara1);
+      paramanager.freecgpara(list,cgpara2);
+      paramanager.freecgpara(list,cgpara1);
+      g_call_system_proc(list,'fpc_variant_copy_overwrite');
+      cgpara2.done;
+      cgpara1.done;
+    end;
+
+  procedure thlcgobj.g_incrrefcount(list: TAsmList; t: tdef; const ref: treference);
+    var
+      href : treference;
+      incrfunc : string;
+      cgpara1,cgpara2 : TCGPara;
+    begin
+       cgpara1.init;
+       cgpara2.init;
+       paramanager.getintparaloc(pocall_default,1,voidpointertype,cgpara1);
+       paramanager.getintparaloc(pocall_default,2,voidpointertype,cgpara2);
+       if is_interfacecom_or_dispinterface(t) then
+         incrfunc:='fpc_intf_incr_ref'
+       else if is_ansistring(t) then
+         incrfunc:='fpc_ansistr_incr_ref'
+       else if is_widestring(t) then
+         incrfunc:='fpc_widestr_incr_ref'
+       else if is_unicodestring(t) then
+         incrfunc:='fpc_unicodestr_incr_ref'
+       else if is_dynamic_array(t) then
+         incrfunc:='fpc_dynarray_incr_ref'
+       else
+        incrfunc:='';
+       { call the special incr function or the generic addref }
+       if incrfunc<>'' then
+        begin
+          { widestrings aren't ref. counted on all platforms so we need the address
+            to create a real copy }
+          if is_widestring(t) then
+            a_loadaddr_ref_cgpara(list,t,ref,cgpara1)
+          else
+            { these functions get the pointer by value }
+            a_load_ref_cgpara(list,t,ref,cgpara1);
+          paramanager.freecgpara(list,cgpara1);
+          g_call_system_proc(list,incrfunc);
+        end
+       else
+        begin
+          if is_open_array(t) then
+            InternalError(201103054);
+          reference_reset_symbol(href,RTTIWriter.get_rtti_label(t,initrtti),0,sizeof(pint));
+          a_loadaddr_ref_cgpara(list,voidpointertype,href,cgpara2);
+          a_loadaddr_ref_cgpara(list,t,ref,cgpara1);
+          paramanager.freecgpara(list,cgpara1);
+          paramanager.freecgpara(list,cgpara2);
+          g_call_system_proc(list,'fpc_addref');
+        end;
+       cgpara2.done;
+       cgpara1.done;
+    end;
+
+  procedure thlcgobj.g_initialize(list: TAsmList; t: tdef; const ref: treference);
+    var
+       href : treference;
+       cgpara1,cgpara2 : TCGPara;
+       pvardata : tdef;
+    begin
+      cgpara1.init;
+      cgpara2.init;
+       if is_ansistring(t) or
+          is_widestring(t) or
+          is_unicodestring(t) or
+          is_interfacecom_or_dispinterface(t) or
+          is_dynamic_array(t) then
+         a_load_const_ref(list,t,0,ref)
+       else if t.typ=variantdef then
+         begin
+           pvardata:=getpointerdef(search_system_type('TVARDATA').typedef);
+           paramanager.getintparaloc(pocall_default,1,pvardata,cgpara1);
+           a_loadaddr_ref_cgpara(list,t,ref,cgpara1);
+           paramanager.freecgpara(list,cgpara1);
+           g_call_system_proc(list,'fpc_variant_init');
+         end
+       else
+         begin
+            if is_open_array(t) then
+              InternalError(201103052);
+            paramanager.getintparaloc(pocall_default,1,voidpointertype,cgpara1);
+            paramanager.getintparaloc(pocall_default,2,voidpointertype,cgpara2);
+            reference_reset_symbol(href,RTTIWriter.get_rtti_label(t,initrtti),0,sizeof(pint));
+            a_loadaddr_ref_cgpara(list,voidpointertype,href,cgpara2);
+            a_loadaddr_ref_cgpara(list,t,ref,cgpara1);
+            paramanager.freecgpara(list,cgpara1);
+            paramanager.freecgpara(list,cgpara2);
+            g_call_system_proc(list,'fpc_initialize');
+         end;
+      cgpara1.done;
+      cgpara2.done;
+    end;
+
+  procedure thlcgobj.g_finalize(list: TAsmList; t: tdef; const ref: treference);
+    var
+       href : treference;
+       cgpara1,cgpara2 : TCGPara;
+       paratype : tdef;
+       decrfunc : string;
+       dynarr: boolean;
+    begin
+      paratype:=getpointerdef(voidpointertype);
+      if is_interfacecom_or_dispinterface(t) then
+        decrfunc:='fpc_intf_decr_ref'
+      else if is_ansistring(t) then
+        decrfunc:='fpc_ansistr_decr_ref'
+      else if is_widestring(t) then
+        decrfunc:='fpc_widestr_decr_ref'
+      else if is_unicodestring(t) then
+        decrfunc:='fpc_unicodestr_decr_ref'
+      else if t.typ=variantdef then
+        begin
+          paratype:=getpointerdef(search_system_type('TVARDATA').typedef);
+          decrfunc:='fpc_variant_clear'
+        end
+      else
+        begin
+          cgpara1.init;
+          cgpara2.init;
+          if is_open_array(t) then
+            InternalError(201103051);
+          dynarr:=is_dynamic_array(t);
+          { fpc_finalize takes a pointer value parameter, fpc_dynarray_clear a
+            pointer var parameter }
+          if not dynarr then
+            paratype:=voidpointertype;
+          paramanager.getintparaloc(pocall_default,1,paratype,cgpara1);
+          paramanager.getintparaloc(pocall_default,2,voidpointertype,cgpara2);
+          reference_reset_symbol(href,RTTIWriter.get_rtti_label(t,initrtti),0,sizeof(pint));
+          a_loadaddr_ref_cgpara(list,voidpointertype,href,cgpara2);
+          a_loadaddr_ref_cgpara(list,t,ref,cgpara1);
+          paramanager.freecgpara(list,cgpara1);
+          paramanager.freecgpara(list,cgpara2);
+          if dynarr then
+            g_call_system_proc(list,'fpc_dynarray_clear')
+          else
+            g_call_system_proc(list,'fpc_finalize');
+          cgpara1.done;
+          cgpara2.done;
+          exit;
+        end;
+      cgpara1.init;
+      paramanager.getintparaloc(pocall_default,1,paratype,cgpara1);
+      a_loadaddr_ref_cgpara(list,t,ref,cgpara1);
+      paramanager.freecgpara(list,cgpara1);
+      g_call_system_proc(list,decrfunc);
+      cgpara1.done;
+    end;
+
+  procedure thlcgobj.g_array_rtti_helper(list: TAsmList; t: tdef; const ref: treference; const highloc: tlocation; const name: string);
+    var
+      cgpara1,cgpara2,cgpara3: TCGPara;
+      href: TReference;
+      hreg, lenreg: TRegister;
+    begin
+      cgpara1.init;
+      cgpara2.init;
+      cgpara3.init;
+      paramanager.getintparaloc(pocall_default,1,voidpointertype,cgpara1);
+      paramanager.getintparaloc(pocall_default,2,voidpointertype,cgpara2);
+      paramanager.getintparaloc(pocall_default,3,ptrsinttype,cgpara3);
+
+      reference_reset_symbol(href,RTTIWriter.get_rtti_label(t,initrtti),0,sizeof(pint));
+      if highloc.loc=LOC_CONSTANT then
+        a_load_const_cgpara(list,ptrsinttype,highloc.value+1,cgpara3)
+      else
+        begin
+          if highloc.loc in [LOC_REGISTER,LOC_CREGISTER] then
+            hreg:=highloc.register
+          else
+            begin
+              hreg:=getintregister(list,ptrsinttype);
+              a_load_loc_reg(list,ptrsinttype,ptrsinttype,highloc,hreg);
+            end;
+          { increment, converts high(x) to length(x) }
+          lenreg:=getintregister(list,ptrsinttype);
+          a_op_const_reg_reg(list,OP_ADD,ptrsinttype,1,hreg,lenreg);
+          a_load_reg_cgpara(list,ptrsinttype,lenreg,cgpara3);
+        end;
+
+      a_loadaddr_ref_cgpara(list,voidpointertype,href,cgpara2);
+      a_loadaddr_ref_cgpara(list,t,ref,cgpara1);
+      paramanager.freecgpara(list,cgpara1);
+      paramanager.freecgpara(list,cgpara2);
+      paramanager.freecgpara(list,cgpara3);
+      g_call_system_proc(list,name);
+
+      cgpara3.done;
+      cgpara2.done;
+      cgpara1.done;
+    end;
+
   procedure thlcgobj.g_rangecheck(list: TAsmList; const l: tlocation; fromdef, todef: tdef);
     var
 {$if defined(cpu64bitalu) or defined(cpu32bitalu)}
@@ -3201,6 +3480,13 @@ implementation
        current_filepos:=storepos;
     end;
 
+
+  function use_ent : boolean;
+    begin
+	  use_ent := (target_info.system in [system_mipsel_linux,system_mipseb_linux])
+	             or (target_info.cpu=cpu_alpha);
+    end;
+
   procedure thlcgobj.gen_proc_symbol(list: TAsmList);
     var
       item,
@@ -3234,11 +3520,15 @@ implementation
           previtem:=item;
           item := TCmdStrListItem(item.next);
         end;
+	  if (use_ent) then
+	    list.concat(Tai_ent.create(current_procinfo.procdef.mangledname));
       current_procinfo.procdef.procstarttai:=tai(list.last);
     end;
 
   procedure thlcgobj.gen_proc_symbol_end(list: TAsmList);
     begin
+	  if (use_ent) then
+	    list.concat(Tai_ent_end.create(current_procinfo.procdef.mangledname));
       list.concat(Tai_symbol_end.Createname(current_procinfo.procdef.mangledname));
 
       current_procinfo.procdef.procendtai:=tai(list.last);
@@ -3600,7 +3890,7 @@ implementation
                 else
                   highloc.loc:=LOC_INVALID;
                 eldef:=tarraydef(tparavarsym(p).vardef).elementdef;
-                g_array_rtti_helper(list,eldef,href,highloc,'FPC_FINALIZE_ARRAY');
+                g_array_rtti_helper(list,eldef,href,highloc,'fpc_finalize_array');
               end
             else
               g_finalize(list,tparavarsym(p).vardef,href);
@@ -3663,7 +3953,7 @@ implementation
                          { open arrays do not contain correct element count in their rtti,
                            the actual count must be passed separately. }
                          eldef:=tarraydef(tparavarsym(p).vardef).elementdef;
-                         g_array_rtti_helper(list,eldef,href,highloc,'FPC_ADDREF_ARRAY');
+                         g_array_rtti_helper(list,eldef,href,highloc,'fpc_addref_array');
                        end
                      else
                       g_incrrefcount(list,tparavarsym(p).vardef,href);
@@ -3691,7 +3981,7 @@ implementation
                            else
                              highloc.loc:=LOC_INVALID;
                            eldef:=tarraydef(tparavarsym(p).vardef).elementdef;
-                           g_array_rtti_helper(list,eldef,href,highloc,'FPC_INITIALIZE_ARRAY');
+                           g_array_rtti_helper(list,eldef,href,highloc,'fpc_initialize_array');
                          end
                        else
                          g_initialize(list,tparavarsym(p).vardef,href);
@@ -4022,7 +4312,9 @@ implementation
          (srsym.typ<>procsym) then
         Message1(cg_f_unknown_compilerproc,procname);
       pd:=tprocdef(tprocsym(srsym).procdeflist[0]);
+      allocallcpuregisters(list);
       a_call_name(list,pd,pd.mangledname,false);
+      deallocallcpuregisters(list);
     end;
 
 

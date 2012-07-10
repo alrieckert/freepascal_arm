@@ -390,21 +390,6 @@ unit cgobj;
 
           }
           procedure g_concatcopy_unaligned(list : TAsmList;const source,dest : treference;len : tcgint);virtual;
-          {# This should emit the opcode to a shortrstring from the source
-             to destination.
-
-             @param(source Source reference of copy)
-             @param(dest Destination reference of copy)
-
-          }
-          procedure g_copyshortstring(list : TAsmList;const source,dest : treference;len:byte);
-          procedure g_copyvariant(list : TAsmList;const source,dest : treference);
-
-          procedure g_incrrefcount(list : TAsmList;t: tdef; const ref: treference);
-          procedure g_array_rtti_helper(list: TAsmList; t: tdef; const ref: treference; const highloc: tlocation;
-            const name: string);
-          procedure g_initialize(list : TAsmList;t : tdef;const ref : treference);
-          procedure g_finalize(list : TAsmList;t : tdef;const ref : treference);
 
           {# Generates overflow checking code for a node }
           procedure g_overflowcheck(list: TAsmList; const Loc:tlocation; def:tdef); virtual;abstract;
@@ -2066,239 +2051,6 @@ implementation
       end;
 
 
-    procedure tcg.g_copyshortstring(list : TAsmList;const source,dest : treference;len:byte);
-      var
-        cgpara1,cgpara2,cgpara3 : TCGPara;
-      begin
-        cgpara1.init;
-        cgpara2.init;
-        cgpara3.init;
-        paramanager.getintparaloc(pocall_default,1,cgpara1);
-        paramanager.getintparaloc(pocall_default,2,cgpara2);
-        paramanager.getintparaloc(pocall_default,3,cgpara3);
-        a_loadaddr_ref_cgpara(list,dest,cgpara3);
-        a_loadaddr_ref_cgpara(list,source,cgpara2);
-        a_load_const_cgpara(list,OS_INT,len,cgpara1);
-        paramanager.freecgpara(list,cgpara3);
-        paramanager.freecgpara(list,cgpara2);
-        paramanager.freecgpara(list,cgpara1);
-        allocallcpuregisters(list);
-        a_call_name(list,'FPC_SHORTSTR_ASSIGN',false);
-        deallocallcpuregisters(list);
-        cgpara3.done;
-        cgpara2.done;
-        cgpara1.done;
-      end;
-
-
-    procedure tcg.g_copyvariant(list : TAsmList;const source,dest : treference);
-      var
-        cgpara1,cgpara2 : TCGPara;
-      begin
-        cgpara1.init;
-        cgpara2.init;
-        paramanager.getintparaloc(pocall_default,1,cgpara1);
-        paramanager.getintparaloc(pocall_default,2,cgpara2);
-        a_loadaddr_ref_cgpara(list,dest,cgpara2);
-        a_loadaddr_ref_cgpara(list,source,cgpara1);
-        paramanager.freecgpara(list,cgpara2);
-        paramanager.freecgpara(list,cgpara1);
-        allocallcpuregisters(list);
-        a_call_name(list,'FPC_VARIANT_COPY_OVERWRITE',false);
-        deallocallcpuregisters(list);
-        cgpara2.done;
-        cgpara1.done;
-      end;
-
-
-    procedure tcg.g_incrrefcount(list : TAsmList;t: tdef; const ref: treference);
-      var
-        href : treference;
-        incrfunc : string;
-        cgpara1,cgpara2 : TCGPara;
-      begin
-         cgpara1.init;
-         cgpara2.init;
-         paramanager.getintparaloc(pocall_default,1,cgpara1);
-         paramanager.getintparaloc(pocall_default,2,cgpara2);
-         if is_interfacecom_or_dispinterface(t) then
-           incrfunc:='FPC_INTF_INCR_REF'
-         else if is_ansistring(t) then
-           incrfunc:='FPC_ANSISTR_INCR_REF'
-         else if is_widestring(t) then
-           incrfunc:='FPC_WIDESTR_INCR_REF'
-         else if is_unicodestring(t) then
-           incrfunc:='FPC_UNICODESTR_INCR_REF'
-         else if is_dynamic_array(t) then
-           incrfunc:='FPC_DYNARRAY_INCR_REF'
-         else
-          incrfunc:='';
-         { call the special incr function or the generic addref }
-         if incrfunc<>'' then
-          begin
-            { widestrings aren't ref. counted on all platforms so we need the address
-              to create a real copy }
-            if is_widestring(t) then
-              a_loadaddr_ref_cgpara(list,ref,cgpara1)
-            else
-              { these functions get the pointer by value }
-              a_load_ref_cgpara(list,OS_ADDR,ref,cgpara1);
-            paramanager.freecgpara(list,cgpara1);
-            allocallcpuregisters(list);
-            a_call_name(list,incrfunc,false);
-            deallocallcpuregisters(list);
-          end
-         else
-          begin
-            if is_open_array(t) then
-              InternalError(201103054);
-            reference_reset_symbol(href,RTTIWriter.get_rtti_label(t,initrtti),0,sizeof(pint));
-            a_loadaddr_ref_cgpara(list,href,cgpara2);
-            a_loadaddr_ref_cgpara(list,ref,cgpara1);
-            paramanager.freecgpara(list,cgpara1);
-            paramanager.freecgpara(list,cgpara2);
-            allocallcpuregisters(list);
-            a_call_name(list,'FPC_ADDREF',false);
-            deallocallcpuregisters(list);
-          end;
-         cgpara2.done;
-         cgpara1.done;
-      end;
-
-
-    procedure tcg.g_array_rtti_helper(list: TAsmList; t: tdef; const ref: treference; const highloc: tlocation; const name: string);
-      var
-        cgpara1,cgpara2,cgpara3: TCGPara;
-        href: TReference;
-        hreg, lenreg: TRegister;
-      begin
-        cgpara1.init;
-        cgpara2.init;
-        cgpara3.init;
-        paramanager.getintparaloc(pocall_default,1,cgpara1);
-        paramanager.getintparaloc(pocall_default,2,cgpara2);
-        paramanager.getintparaloc(pocall_default,3,cgpara3);
-
-        reference_reset_symbol(href,RTTIWriter.get_rtti_label(t,initrtti),0,sizeof(pint));
-        if highloc.loc=LOC_CONSTANT then
-          a_load_const_cgpara(list,OS_INT,highloc.value+1,cgpara3)
-        else
-          begin
-            if highloc.loc in [LOC_REGISTER,LOC_CREGISTER] then
-              hreg:=highloc.register
-            else
-              begin
-                hreg:=getintregister(list,OS_INT);
-                a_load_loc_reg(list,OS_INT,highloc,hreg);
-              end;
-            { increment, converts high(x) to length(x) }
-            lenreg:=getintregister(list,OS_INT);
-            a_op_const_reg_reg(list,OP_ADD,OS_INT,1,hreg,lenreg);
-            a_load_reg_cgpara(list,OS_INT,lenreg,cgpara3);
-          end;
-
-        a_loadaddr_ref_cgpara(list,href,cgpara2);
-        a_loadaddr_ref_cgpara(list,ref,cgpara1);
-        paramanager.freecgpara(list,cgpara1);
-        paramanager.freecgpara(list,cgpara2);
-        paramanager.freecgpara(list,cgpara3);
-        allocallcpuregisters(list);
-        a_call_name(list,name,false);
-        deallocallcpuregisters(list);
-
-        cgpara3.done;
-        cgpara2.done;
-        cgpara1.done;
-      end;
-
-    procedure tcg.g_initialize(list : TAsmList;t : tdef;const ref : treference);
-      var
-         href : treference;
-         cgpara1,cgpara2 : TCGPara;
-      begin
-        cgpara1.init;
-        cgpara2.init;
-         if is_ansistring(t) or
-            is_widestring(t) or
-            is_unicodestring(t) or
-            is_interfacecom_or_dispinterface(t) or
-            is_dynamic_array(t) then
-           a_load_const_ref(list,OS_ADDR,0,ref)
-         else if t.typ=variantdef then
-           begin
-             paramanager.getintparaloc(pocall_default,1,cgpara1);
-             a_loadaddr_ref_cgpara(list,ref,cgpara1);
-             paramanager.freecgpara(list,cgpara1);
-             allocallcpuregisters(list);
-             a_call_name(list,'FPC_VARIANT_INIT',false);
-             deallocallcpuregisters(list);
-           end
-         else
-           begin
-              if is_open_array(t) then
-                InternalError(201103052);
-              paramanager.getintparaloc(pocall_default,1,cgpara1);
-              paramanager.getintparaloc(pocall_default,2,cgpara2);
-              reference_reset_symbol(href,RTTIWriter.get_rtti_label(t,initrtti),0,sizeof(pint));
-              a_loadaddr_ref_cgpara(list,href,cgpara2);
-              a_loadaddr_ref_cgpara(list,ref,cgpara1);
-              paramanager.freecgpara(list,cgpara1);
-              paramanager.freecgpara(list,cgpara2);
-              allocallcpuregisters(list);
-              a_call_name(list,'FPC_INITIALIZE',false);
-              deallocallcpuregisters(list);
-           end;
-        cgpara1.done;
-        cgpara2.done;
-      end;
-
-
-    procedure tcg.g_finalize(list : TAsmList;t : tdef;const ref : treference);
-      var
-         href : treference;
-         cgpara1,cgpara2 : TCGPara;
-         decrfunc : string;
-      begin
-        if is_interfacecom_or_dispinterface(t) then
-          decrfunc:='FPC_INTF_DECR_REF'
-        else if is_ansistring(t) then
-          decrfunc:='FPC_ANSISTR_DECR_REF'
-        else if is_widestring(t) then
-          decrfunc:='FPC_WIDESTR_DECR_REF'
-        else if is_unicodestring(t) then
-          decrfunc:='FPC_UNICODESTR_DECR_REF'
-        else if t.typ=variantdef then
-          decrfunc:='FPC_VARIANT_CLEAR'
-        else
-          begin
-            cgpara1.init;
-            cgpara2.init;
-            if is_open_array(t) then
-              InternalError(201103051);
-            paramanager.getintparaloc(pocall_default,1,cgpara1);
-            paramanager.getintparaloc(pocall_default,2,cgpara2);
-            reference_reset_symbol(href,RTTIWriter.get_rtti_label(t,initrtti),0,sizeof(pint));
-            a_loadaddr_ref_cgpara(list,href,cgpara2);
-            a_loadaddr_ref_cgpara(list,ref,cgpara1);
-            paramanager.freecgpara(list,cgpara1);
-            paramanager.freecgpara(list,cgpara2);
-            if is_dynamic_array(t) then
-              g_call(list,'FPC_DYNARRAY_CLEAR')
-            else
-              g_call(list,'FPC_FINALIZE');
-            cgpara1.done;
-            cgpara2.done;
-            exit;
-          end;
-        cgpara1.init;
-        paramanager.getintparaloc(pocall_default,1,cgpara1);
-        a_loadaddr_ref_cgpara(list,ref,cgpara1);
-        paramanager.freecgpara(list,cgpara1);
-        g_call(list,decrfunc);
-        cgpara1.done;
-      end;
-
-
     procedure tcg.g_overflowCheck_loc(List:TAsmList;const Loc:TLocation;def:TDef;ovloc : tlocation);
       begin
         g_overflowCheck(list,loc,def);
@@ -2329,8 +2081,8 @@ implementation
            current_asmdata.getjumplabel(oklabel);
            a_cmp_const_reg_label(list,OS_ADDR,OC_NE,0,reg,oklabel);
            cgpara1.init;
-           paramanager.getintparaloc(pocall_default,1,cgpara1);
-           a_load_const_cgpara(list,OS_INT,tcgint(210),cgpara1);
+           paramanager.getintparaloc(pocall_default,1,s32inttype,cgpara1);
+           a_load_const_cgpara(list,OS_S32,tcgint(210),cgpara1);
            paramanager.freecgpara(list,cgpara1);
            a_call_name(list,'FPC_HANDLEERROR',false);
            a_label(list,oklabel);
@@ -2346,10 +2098,10 @@ implementation
       begin
         cgpara1.init;
         cgpara2.init;
-        paramanager.getintparaloc(pocall_default,1,cgpara1);
-        paramanager.getintparaloc(pocall_default,2,cgpara2);
+        paramanager.getintparaloc(pocall_default,1,voidpointertype,cgpara1);
         if (cs_check_object in current_settings.localswitches) then
          begin
+           paramanager.getintparaloc(pocall_default,2,voidpointertype,cgpara2);
            reference_reset_symbol(hrefvmt,current_asmdata.RefAsmSymbol(objdef.vmt_mangledname),0,sizeof(pint));
            a_loadaddr_ref_cgpara(list,hrefvmt,cgpara2);
            a_load_reg_cgpara(list,OS_ADDR,reg,cgpara1);
@@ -2406,7 +2158,7 @@ implementation
 
         { do getmem call }
         cgpara1.init;
-        paramanager.getintparaloc(pocall_default,1,cgpara1);
+        paramanager.getintparaloc(pocall_default,1,ptruinttype,cgpara1);
         a_load_reg_cgpara(list,OS_INT,sizereg,cgpara1);
         paramanager.freecgpara(list,cgpara1);
         allocallcpuregisters(list);
@@ -2420,11 +2172,11 @@ implementation
         cgpara1.init;
         cgpara2.init;
         cgpara3.init;
-        paramanager.getintparaloc(pocall_default,1,cgpara1);
-        paramanager.getintparaloc(pocall_default,2,cgpara2);
-        paramanager.getintparaloc(pocall_default,3,cgpara3);
+        paramanager.getintparaloc(pocall_default,1,voidpointertype,cgpara1);
+        paramanager.getintparaloc(pocall_default,2,voidpointertype,cgpara2);
+        paramanager.getintparaloc(pocall_default,3,ptrsinttype,cgpara3);
         { load size }
-        a_load_reg_cgpara(list,OS_INT,sizereg,cgpara3);
+        a_load_reg_cgpara(list,OS_SINT,sizereg,cgpara3);
         { load destination }
         a_load_reg_cgpara(list,OS_ADDR,destreg,cgpara2);
         { load source }
@@ -2447,7 +2199,7 @@ implementation
       begin
         { do move call }
         cgpara1.init;
-        paramanager.getintparaloc(pocall_default,1,cgpara1);
+        paramanager.getintparaloc(pocall_default,1,voidpointertype,cgpara1);
         { load source }
         a_load_loc_cgpara(list,l,cgpara1);
         paramanager.freecgpara(list,cgpara1);
@@ -2507,12 +2259,19 @@ implementation
 
                 for r:=low(saved_mm_registers) to high(saved_mm_registers) do
                   begin
-                    if saved_mm_registers[r] in rg[R_MMREGISTER].used_in_proc then
+                    { the array has to be declared even if no MM registers are saved
+                      (such as with SSE on i386), and since 0-element arrays don't
+                      exist, they contain a single RS_INVALID element in that case
+                    }
+                    if saved_mm_registers[r]<>RS_INVALID then
                       begin
-                        a_loadmm_reg_ref(list,OS_VECTOR,OS_VECTOR,newreg(R_MMREGISTER,saved_mm_registers[r],R_SUBNONE),href,nil);
-                        inc(href.offset,tcgsize2size[OS_VECTOR]);
+                        if saved_mm_registers[r] in rg[R_MMREGISTER].used_in_proc then
+                          begin
+                            a_loadmm_reg_ref(list,OS_VECTOR,OS_VECTOR,newreg(R_MMREGISTER,saved_mm_registers[r],R_SUBNONE),href,nil);
+                            inc(href.offset,tcgsize2size[OS_VECTOR]);
+                          end;
+                        include(rg[R_MMREGISTER].preserved_by_proc,saved_mm_registers[r]);
                       end;
-                    include(rg[R_MMREGISTER].preserved_by_proc,saved_mm_registers[r]);
                   end;
               end;
           end;

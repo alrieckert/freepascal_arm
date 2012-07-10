@@ -78,6 +78,7 @@ Type
     dwYcountChars,
     dwy : Cardinal;
     FXTermProgram: String;
+    FPipeBufferSize : cardinal;
     Procedure FreeStreams;
     Function  GetExitStatus : Integer;
     Function  GetRunning : Boolean;
@@ -134,6 +135,7 @@ Type
     property OnForkEvent : TProcessForkEvent Read FForkEvent Write FForkEvent;
     {$endif UNIX}
   Published
+    property PipeBufferSize : cardinal read FPipeBufferSize write FPipeBufferSize default 1024;
     Property Active : Boolean Read GetRunning Write SetActive;
     Property ApplicationName : String Read FApplicationName Write SetApplicationName; deprecated;
     Property CommandLine : String Read FCommandLine Write SetCommandLine ; deprecated;
@@ -247,6 +249,7 @@ begin
   {$ifdef UNIX}
   FForkEvent:=nil;
   {$endif UNIX}
+  FPipeBufferSize := 1024;
   FEnvironment:=TStringList.Create;
   FParameters:=TStringList.Create;
 end;
@@ -465,8 +468,8 @@ begin
   try
     try
     p.Options :=  [poUsePipes];
-    p.Execute;
     bytesread:=0;
+    p.Execute;
     while p.Running do
       begin          
         Setlength(outputstring,BytesRead + READ_BYTES);

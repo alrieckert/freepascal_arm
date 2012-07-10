@@ -40,9 +40,14 @@ interface
       floatregstart : aint;
       intregssave,
       floatregssave : byte;
+      needs_frame_pointer: boolean;
       register_used : tparasupregsused;
+      register_size : tparasupregsize;
+      register_name : tparasuprename;
       register_offset : tparasupregsoffset;
       computed_local_size : longint;
+      //intparareg,
+      //parasize : longint;
       constructor create(aparent:tprocinfo);override;
       function calc_stackframe_size:longint;override;
       procedure set_first_temp_offset;override;
@@ -56,7 +61,7 @@ implementation
 
     uses
       systems,globals,verbose,
-      cpubase,cgbase,cgobj,
+      cpubase,cgbase,cgutils,cgobj,
       tgobj,paramgr,symconst;
 
     constructor TMIPSProcInfo.create(aparent: tprocinfo);
@@ -67,12 +72,24 @@ implementation
         for i:=low(tparasupregs)  to high(tparasupregs) do
           begin
             register_used[i]:=false;
+            register_size[i]:=OS_NO;
+            register_name[i]:='invalid';
             register_offset[i]:=-1;
           end;
-
-        floatregssave:=11;
-        intregssave:=10;
+        floatregssave:=12; { f20-f31 }
+        intregssave:=12;   { r16-r23,r28-r31 }
+        { for testing }
+        needs_frame_pointer := true;//false;
         computed_local_size:=-1;
+		{ pi_needs_got is not yet set correctly 
+		  so include it always if creating PIC code }
+        if (cs_create_pic in current_settings.moduleswitches) then
+          begin
+            include(flags, pi_needs_got);
+            got:=NR_GP;
+          end
+        else
+          got:=NR_NO;
       end;
 
 
@@ -84,7 +101,8 @@ implementation
         if tg.direction = -1 then
           tg.setfirsttemp(0)
         else
-          tg.setfirsttemp(maxpushedparasize+floatregssave*sizeof(aint)+intregssave*sizeof(aint));
+          tg.setfirsttemp(maxpushedparasize+
+           floatregssave*sizeof(aint)+intregssave*sizeof(aint));
       end;
 
 
@@ -97,7 +115,7 @@ implementation
         floatregstart:=result;
         inc(result,floatregssave*4);
         intregstart:=result;
-        inc(result,intregssave*4);
+        //inc(result,intregssave*4);
         result:=Align(tg.lasttemp,max(current_settings.alignment.localalignmin,8));
         if computed_local_size=-1 then
           begin
@@ -105,7 +123,7 @@ implementation
             procdef.total_local_size:=result;
           end
         else if computed_local_size <> result then
-          Comment(V_Warning,'TMIPSProcInfo.calc_stackframe_size result changed');
+          Comment(V_Error,'TMIPSProcInfo.calc_stackframe_size result changed');
       end;
 
     function mips_extra_offset(procdef : tprocdef) : longint;

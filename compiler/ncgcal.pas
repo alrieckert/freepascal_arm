@@ -133,7 +133,7 @@ implementation
       begin
         if not(left.location.loc in [LOC_CREFERENCE,LOC_REFERENCE]) then
           internalerror(200304235);
-        hlcg.a_loadaddr_ref_cgpara(current_asmdata.CurrAsmList,left.resultdef,tempcgpara.def,left.location.reference,tempcgpara);
+        hlcg.a_loadaddr_ref_cgpara(current_asmdata.CurrAsmList,left.resultdef,left.location.reference,tempcgpara);
       end;
 
 
@@ -203,8 +203,8 @@ implementation
                          if third=nil then
                            InternalError(201103063);
                          secondpass(third);
-                         cg.g_array_rtti_helper(current_asmdata.CurrAsmList,tarraydef(resultdef).elementdef,
-                           href,third.location,'FPC_FINALIZE_ARRAY');
+                         hlcg.g_array_rtti_helper(current_asmdata.CurrAsmList,tarraydef(resultdef).elementdef,
+                           href,third.location,'fpc_finalize_array');
                        end;
                    end
                  else
@@ -529,7 +529,9 @@ implementation
                            passing a shortstring }
                          if (hp2.nodetype=typeconvn) and
                             (tunarynode(hp2).left.nodetype=addrn) then
-                           hp2:=tunarynode(tunarynode(hp2).left).left;
+                           hp2:=tunarynode(tunarynode(hp2).left).left
+                         else if tunarynode(hp2).nodetype=addrn then
+                           hp2:=tunarynode(hp2).left;
                          location_freetemp(current_asmdata.CurrAsmList,hp2.location);
                          hp:=tarrayconstructornode(hp).right;
                        end;
@@ -971,7 +973,7 @@ implementation
             (tf_safecall_exceptions in target_info.flags) then
            begin
              cgpara.init;
-             paramanager.getintparaloc(pocall_default,1,cgpara);
+             paramanager.getintparaloc(pocall_default,1,s32inttype,cgpara);
              cg.a_load_reg_cgpara(current_asmdata.CurrAsmList,OS_INT,NR_FUNCTION_RESULT_REG,cgpara);
              paramanager.freecgpara(current_asmdata.CurrAsmList,cgpara);
              cgpara.done;
