@@ -659,7 +659,7 @@ implementation
                       internalerror(200306061);
                     hreg:=cg.getaddressregister(list);
                     if not is_packed_array(tparavarsym(p).vardef) then
-                      cg.g_copyvaluepara_openarray(list,href,hsym.initialloc,tarraydef(tparavarsym(p).vardef).elesize,hreg)
+                      hlcg.g_copyvaluepara_openarray(list,href,hsym.initialloc,tarraydef(tparavarsym(p).vardef),hreg)
                     else
                       internalerror(2006080401);
 //                      cg.g_copyvaluepara_packedopenarray(list,href,hsym.intialloc,tarraydef(tparavarsym(p).vardef).elepackedbitsize,hreg);
@@ -1895,6 +1895,7 @@ implementation
     procedure gen_load_vmt_register(list:TAsmList;objdef:tobjectdef;selfloc:tlocation;var vmtreg:tregister);
       var
         href : treference;
+        selfdef: tdef;
       begin
         if is_object(objdef) then
           begin
@@ -1904,6 +1905,7 @@ implementation
                 begin
                   reference_reset_base(href,cg.getaddressregister(list),objdef.vmt_offset,sizeof(pint));
                   cg.a_loadaddr_ref_reg(list,selfloc.reference,href.base);
+                  selfdef:=getpointerdef(objdef);
                 end;
               else
                 internalerror(200305056);
@@ -1914,6 +1916,7 @@ implementation
             and the first "field" of an Objective-C class instance is a pointer
             to its "meta-class".  }
           begin
+            selfdef:=objdef;
             case selfloc.loc of
               LOC_REGISTER:
                 begin
@@ -1941,7 +1944,7 @@ implementation
             end;
           end;
         vmtreg:=cg.getaddressregister(list);
-        cg.g_maybe_testself(list,href.base);
+        hlcg.g_maybe_testself(list,selfdef,href.base);
         cg.a_load_ref_reg(list,OS_ADDR,OS_ADDR,href,vmtreg);
 
         { test validity of VMT }

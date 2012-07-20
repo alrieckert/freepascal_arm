@@ -28,6 +28,8 @@ resourcestring
   SPasTreeElement = 'generic element';
   SPasTreeSection = 'unit section';
   SPasTreeModule = 'module';
+  SPasTreeUnit = 'unit';
+  SPasTreeProgram = 'program';
   SPasTreePackage = 'package';
   SPasTreeResString = 'resource string';
   SPasTreeType = 'generic type';
@@ -247,7 +249,7 @@ type
     function ElementTypeName: string; override;
   public
     Declarations, ResStrings, Types, Consts, Classes,
-    Functions, Variables, Properties: TFPList;
+    Functions, Variables, Properties, ExportSymbols: TFPList;
   end;
 
   { TPasSection }
@@ -271,7 +273,10 @@ type
   TImplementationSection = class(TPasSection)
   end;
 
-  TProgramSection = class(TPasSection)
+  TProgramSection = class(TImplementationSection)
+  end;
+
+  TLibrarySection = class(TImplementationSection)
   end;
 
   TInitializationSection = class;
@@ -295,7 +300,31 @@ type
 
   { TPasProgram }
 
-  TPasProgram = class(TPasModule);
+  { TPasUnitModule }
+
+  TPasUnitModule = Class(TPasModule)
+    function ElementTypeName: string; override;
+  end;
+
+  TPasProgram = class(TPasModule)
+  Public
+    destructor Destroy; override;
+    function ElementTypeName: string; override;
+  Public
+    ProgramSection: TProgramSection;
+    InputFile,OutPutFile : String;
+  end;
+
+  { TPasLibrary }
+
+  TPasLibrary = class(TPasModule)
+  Public
+    destructor Destroy; override;
+    function ElementTypeName: string; override;
+  Public
+    LibrarySection: TLibrarySection;
+    InputFile,OutPutFile : String;
+  end;
 
   { TPasPackage }
 
@@ -552,11 +581,22 @@ type
     ResultEl: TPasResultElement;
   end;
 
-  TPasUnresolvedTypeRef = class(TPasType)
+  TPasUnresolvedSymbolRef = class(TPasType)
+  end;
+
+  TPasUnresolvedTypeRef = class(TPasUnresolvedSymbolRef)
   public
     // Typerefs cannot be parented! -> AParent _must_ be NIL
     constructor Create(const AName: string; AParent: TPasElement); override;
     function ElementTypeName: string; override;
+  end;
+
+  { TPasUnresolvedUnitRef }
+
+  TPasUnresolvedUnitRef = Class(TPasUnresolvedSymbolRef)
+    function ElementTypeName: string; override;
+  Public
+    FileName : string;
   end;
 
   { TPasStringType }
@@ -588,6 +628,16 @@ type
     Modifiers : string;
     AbsoluteLocation : String;
     Expr: TPasExpr;
+  end;
+
+  { TPasExportSymbol }
+
+  TPasExportSymbol = class(TPasElement)
+    ExportName : TPasExpr;
+    Exportindex : TPasExpr;
+    Destructor Destroy; override;
+    function ElementTypeName: string; override;
+    function GetDeclaration(full : boolean) : string; override;
   end;
 
   { TPasConst }
@@ -732,6 +782,7 @@ type
     constructor Create(const AName: string; AParent: TPasElement); override;
     destructor Destroy; override;
   public
+
     Labels: TFPList;
     Body: TPasImplBlock;
   end;
@@ -960,6 +1011,7 @@ type
   public
     left  : TPasExpr;
     right : TPasExpr;
+    Destructor Destroy; override;
   end;
 
   { TPasImplSimple }
@@ -967,6 +1019,7 @@ type
   TPasImplSimple = class (TPasImplStatement)
   public
     expr  : TPasExpr;
+    Destructor Destroy; override;
   end;
 
   TPasImplTryHandler = class;
@@ -1062,6 +1115,87 @@ const
 implementation
 
 uses SysUtils;
+
+{ TPasImplSimple }
+
+destructor TPasImplSimple.Destroy;
+begin
+  FreeAndNil(Expr);
+  inherited Destroy;
+end;
+
+{ TPasImplAssign }
+
+destructor TPasImplAssign.Destroy;
+begin
+  FreeAndNil(Left);
+  FreeAndNil(Right);
+  inherited Destroy;
+end;
+
+{ TPasExportSymbol }
+
+destructor TPasExportSymbol.Destroy;
+begin
+  FreeAndNil(ExportName);
+  FreeAndNil(ExportIndex);
+  inherited Destroy;
+end;
+
+function TPasExportSymbol.ElementTypeName: string;
+begin
+  Result:='Export'
+end;
+
+function TPasExportSymbol.GetDeclaration(full: boolean): string;
+begin
+  Result:=Name;
+  if (ExportName<>Nil) then
+    Result:=Result+' name '+ExportName.GetDeclaration(Full)
+  else if (ExportIndex<>Nil) then
+    Result:=Result+' index '+ExportIndex.GetDeclaration(Full);
+
+end;
+
+{ TPasUnresolvedUnitRef }
+
+function TPasUnresolvedUnitRef.ElementTypeName: string;
+begin
+  Result:=SPasTreeUnit;
+end;
+
+{ TPasLibrary }
+
+destructor TPasLibrary.Destroy;
+begin
+  FreeAndNil(LibrarySection);
+  inherited Destroy;
+end;
+
+function TPasLibrary.ElementTypeName: string;
+begin
+  Result:=inherited ElementTypeName;
+end;
+
+{ TPasProgram }
+
+destructor TPasProgram.Destroy;
+begin
+  FreeAndNil(ProgramSection);
+  inherited Destroy;
+end;
+
+function TPasProgram.ElementTypeName: string;
+begin
+  Result:=inherited ElementTypeName;
+end;
+
+{ TPasUnitModule }
+
+function TPasUnitModule.ElementTypeName: string;
+begin
+  Result:=SPasTreeUnit;
+end;
 
 { TPasStringType }
 
@@ -1177,12 +1311,28 @@ begin
   Inc(FRefCount);
 end;
 
+{ $define debugrefcount}
+
 procedure TPasElement.Release;
+
+{$ifdef debugrefcount}
+Var
+  Cn : String;
+  {$endif}
+
 begin
+{$ifdef debugrefcount}
+  CN:=ClassName;
+  CN:=CN+' '+IntToStr(FRefCount);
+  If Assigned(Parent) then
+    CN:=CN+' ('+Parent.ClassName+')';
+  Writeln('Release : ',Cn);
+{$endif}
   if FRefCount = 0 then
     Free
   else
     Dec(FRefCount);
+{$ifdef debugrefcount}  Writeln('Released : ',Cn); {$endif}
 end;
 
 function TPasElement.FullName: string;
@@ -1256,12 +1406,14 @@ begin
   Functions := TFPList.Create;
   Variables := TFPList.Create;
   Properties := TFPList.Create;
+  ExportSymbols := TFPList.Create;
 end;
 
 destructor TPasDeclarations.Destroy;
 var
   i: Integer;
 begin
+  ExportSymbols.Free;
   Variables.Free;
   Functions.Free;
   Classes.Free;
@@ -1282,7 +1434,9 @@ begin
     InterfaceSection.Release;
   if Assigned(ImplementationSection) then
     ImplementationSection.Release;
-  inherited Destroy;
+ FreeAndNil(InitializationSection);
+ FreeAndNil(FinalizationSection);
+ inherited Destroy;
 end;
 
 
@@ -1665,9 +1819,15 @@ procedure TPasImplIfElse.AddElement(Element: TPasImplElement);
 begin
   inherited AddElement(Element);
   if IfBranch=nil then
-    IfBranch:=Element
+    begin
+    IfBranch:=Element;
+    element.AddRef;
+    end
   else if ElseBranch=nil then
-    ElseBranch:=Element
+    begin
+    ElseBranch:=Element;
+    Element.AddRef;
+    end
   else
     raise Exception.Create('TPasImplIfElse.AddElement if and else already set - please report this bug');
 end;
@@ -1690,7 +1850,10 @@ procedure TPasImplForLoop.AddElement(Element: TPasImplElement);
 begin
   inherited AddElement(Element);
   if Body=nil then
-    Body:=Element
+    begin
+    Body:=Element;
+    Body.AddRef;
+    end
   else
     raise Exception.Create('TPasImplForLoop.AddElement body already set - please report this bug');
 end;
@@ -2505,6 +2668,8 @@ end;
 destructor TProcedureBody.Destroy;
 begin
   FreeAndNil(Labels);
+  if Assigned(Body) then
+    Body.Release;
   inherited Destroy;
 end;
 
@@ -2521,7 +2686,10 @@ procedure TPasImplWhileDo.AddElement(Element: TPasImplElement);
 begin
   inherited AddElement(Element);
   if Body=nil then
-    Body:=Element
+    begin
+    Body:=Element;
+    Body.AddRef;
+    end
   else
     raise Exception.Create('TPasImplWhileDo.AddElement body already set - please report this bug');
 end;
@@ -2576,7 +2744,10 @@ procedure TPasImplCaseStatement.AddElement(Element: TPasImplElement);
 begin
   inherited AddElement(Element);
   if Body=nil then
+    begin
     Body:=Element;
+    Body.AddRef;
+    end;
 end;
 
 procedure TPasImplCaseStatement.AddExpression(const Expr: string);
@@ -2654,7 +2825,10 @@ procedure TPasImplExceptOn.AddElement(Element: TPasImplElement);
 begin
   inherited AddElement(Element);
   if Body=nil then
+    begin
     Body:=Element;
+    Body.AddRef;
+    end;
 end;
 
 { TPasImplStatement }
