@@ -46,7 +46,8 @@ interface
           shinfo,
           shentsize : longint;
           constructor create(AList:TFPHashObjectList;const Aname:string;Aalign:shortint;Aoptions:TObjSectionOptions);override;
-          constructor create_ext(aobjdata:TObjData;const Aname:string;Ashtype,Ashflags,Ashlink,Ashinfo:longint;Aalign:shortint;Aentsize:longint);
+          constructor create_ext(aobjdata:TObjData;const Aname:string;Ashtype,Ashflags:longint;Aalign:shortint;Aentsize:longint);
+          constructor create_reloc(aobjdata:TObjData;const Aname:string;allocflag:boolean);
        end;
 
        TElfSymtabKind = (esk_obj,esk_exe,esk_dyn);
@@ -57,7 +58,7 @@ interface
          fstrsec: TObjSection;
          symidx: longint;
          constructor create(aObjData:TObjData;aKind:TElfSymtabKind);reintroduce;
-         procedure writeSymbol(objsym:TObjSymbol);
+         procedure writeSymbol(objsym:TObjSymbol;nameidx:longword=0);
          procedure writeInternalSymbol(astridx:longint;ainfo:byte;ashndx:word);
        end;
 
@@ -110,6 +111,10 @@ implementation
       R_386_PC32 = 2;                  { PC-relative relocation }
       R_386_GOT32 = 3;                 { an offset into GOT }
       R_386_PLT32 = 4;                 { a PC-relative offset into PLT }
+      R_386_COPY = 5;
+      R_386_GLOB_DAT = 6;
+      R_386_JUMP_SLOT = 7;
+      R_386_RELATIVE = 8;
       R_386_GOTOFF = 9;                { an offset from GOT base }
       R_386_GOTPC = 10;                { a PC-relative offset _to_ GOT }
       R_386_GNU_VTINHERIT = 250;
@@ -238,6 +243,9 @@ implementation
       STT_FUNC    = 2;
       STT_SECTION = 3;
       STT_FILE    = 4;
+      STT_COMMON  = 5;
+      STT_TLS     = 6;
+      STT_GNU_IFUNC = 10;
 
       { program header types }
       PT_NULL     = 0;
@@ -247,14 +255,20 @@ implementation
       PT_NOTE     = 4;
       PT_SHLIB    = 5;
       PT_PHDR     = 6;
+      PT_LOOS     = $60000000;
+      PT_HIOS     = $6FFFFFFF;
       PT_LOPROC   = $70000000;
       PT_HIPROC   = $7FFFFFFF;
+      PT_GNU_EH_FRAME = PT_LOOS + $474e550;   { Frame unwind information }
+      PT_GNU_STACK = PT_LOOS + $474e551;      { Stack flags }
+      PT_GNU_RELRO = PT_LOOS + $474e552;      { Read-only after relocation }
 
       { program header flags }
       PF_X = 1;
       PF_W = 2;
       PF_R = 4;
-      PF_MASKPROC = $F0000000;
+      PF_MASKOS   = $0FF00000;   { OS-specific reserved bits }
+      PF_MASKPROC = $F0000000;   { Processor-specific reserved bits }
 
       { .dynamic tags  }
       DT_NULL     = 0;
@@ -296,6 +310,14 @@ implementation
       DT_HIOS     = $6ffff000;
       DT_LOPROC   = $70000000;
       DT_HIPROC   = $7fffffff;
+
+      DT_RELACOUNT = $6ffffff9;
+      DT_RELCOUNT  = $6ffffffa;
+      DT_FLAGS_1   = $6ffffffb;
+      DT_VERDEF    = $6ffffffc;
+      DT_VERDEFNUM = $6ffffffd;
+      DT_VERNEED   = $6ffffffe;
+      DT_VERNEEDNUM = $6fffffff;
 
       type
       { Structures which are written directly to the output file }
@@ -424,6 +446,36 @@ implementation
             1: (d_ptr: qword);
         end;
 
+        TElfVerdef=record        { same for 32 and 64 bits }
+          vd_version: word;      { =1 }
+          vd_flags:   word;
+          vd_ndx:     word;
+          vd_cnt:     word;      { number of verdaux records }
+          vd_hash:    longword;  { ELF hash of version name }
+          vd_aux:     longword;  { offset to verdaux records }
+          vd_next:    longword;  { offset to next verdef record }
+        end;
+
+        TElfVerdaux=record
+          vda_name: longword;
+          vda_next: longword;
+        end;
+
+        TElfVerneed=record
+          vn_version: word;      { =VER_NEED_CURRENT }
+          vn_cnt:     word;
+          vn_file:    longword;
+          vn_aux:     longword;
+          vn_next:    longword;
+        end;
+
+        TElfVernaux=record
+          vna_hash:  longword;
+          vna_flags: word;
+          vna_other: word;
+          vna_name:  longword;
+          vna_next:  longword;
+        end;
 
 {$ifdef cpu64bitaddr}
       const
@@ -435,6 +487,12 @@ implementation
         telfsechdr = telf64sechdr;
         telfproghdr = telf64proghdr;
         telfdyn = telf64dyn;
+
+      function ELF_R_INFO(sym:longword;typ:byte):qword;inline;
+        begin
+          result:=(qword(sym) shl 32) or typ;
+        end;
+
 {$else cpu64bitaddr}
       const
         ELFCLASS = ELFCLASS32;
@@ -445,6 +503,11 @@ implementation
         telfsechdr = telf32sechdr;
         telfproghdr = telf32proghdr;
         telfdyn = telf32dyn;
+
+      function ELF_R_INFO(sym:longword;typ:byte):longword;inline;
+        begin
+          result:=(sym shl 8) or typ;
+        end;
 {$endif cpu64bitaddr}
 
 {$ifdef x86_64}
@@ -701,7 +764,7 @@ implementation
       end;
 
 
-    constructor TElfObjSection.create_ext(aobjdata:TObjData;const Aname:string;Ashtype,Ashflags,Ashlink,Ashinfo:longint;Aalign:shortint;Aentsize:longint);
+    constructor TElfObjSection.create_ext(aobjdata:TObjData;const Aname:string;Ashtype,Ashflags:longint;Aalign:shortint;Aentsize:longint);
       var
         aoptions : TObjSectionOptions;
       begin
@@ -712,11 +775,23 @@ implementation
         shstridx:=0;
         shtype:=AshType;
         shflags:=AshFlags;
-        shlink:=Ashlink;
-        shinfo:=Ashinfo;
         shentsize:=Aentsize;
       end;
 
+
+    const
+      relsec_prefix:array[boolean] of string[5] = ('.rel','.rela');
+      relsec_shtype:array[boolean] of longword = (SHT_REL,SHT_RELA);
+
+    constructor TElfObjSection.create_reloc(aobjdata:TObjData;const Aname:string;allocflag:boolean);
+      begin
+        create_ext(aobjdata,
+          relsec_prefix[relocs_use_addend]+aname,
+          relsec_shtype[relocs_use_addend],
+          SHF_ALLOC*ord(allocflag),
+          sizeof(pint),
+          (2+ord(relocs_use_addend))*sizeof(pint));
+      end;
 
 {****************************************************************************
                             TElfObjData
@@ -973,8 +1048,8 @@ implementation
         dyn:boolean;
       begin
         dyn:=(aKind=esk_dyn);
-        create_ext(aObjData,symsecnames[dyn],symsectypes[dyn],symsecattrs[dyn],0,0,sizeof(pint),sizeof(TElfSymbol));
-        fstrsec:=TElfObjSection.create_ext(aObjData,strsecnames[dyn],SHT_STRTAB,symsecattrs[dyn],0,0,1,0);
+        create_ext(aObjData,symsecnames[dyn],symsectypes[dyn],symsecattrs[dyn],sizeof(pint),sizeof(TElfSymbol));
+        fstrsec:=TElfObjSection.create_ext(aObjData,strsecnames[dyn],SHT_STRTAB,symsecattrs[dyn],1,0);
         fstrsec.writestr(#0);
         writezeros(sizeof(TElfSymbol));
         symidx:=1;
@@ -996,14 +1071,19 @@ implementation
         write(elfsym,sizeof(elfsym));
       end;
 
-    procedure TElfSymtab.writeSymbol(objsym:TObjSymbol);
+    procedure TElfSymtab.writeSymbol(objsym:TObjSymbol;nameidx:longword);
       var
         elfsym:TElfSymbol;
       begin
         fillchar(elfsym,sizeof(elfsym),0);
         { symbolname, write the #0 separate to overcome 255+1 char not possible }
-        elfsym.st_name:=fstrsec.writestr(objsym.name);
-        fstrsec.writestr(#0);
+        if nameidx=0 then
+          begin
+            elfsym.st_name:=fstrsec.writestr(objsym.name);
+            fstrsec.writestr(#0);
+          end
+        else
+          elfsym.st_name:=nameidx;
         elfsym.st_size:=objsym.size;
         case objsym.bind of
           AB_LOCAL :
@@ -1082,10 +1162,9 @@ implementation
         with data do
          begin
            { create the reloc section }
-           if relocs_use_addend then
-             relocsect:=TElfObjSection.create_ext(data,'.rela'+s.name,SHT_RELA,0,symtabsect.index,s.index,4,3*sizeof(pint))
-           else
-             relocsect:=TElfObjSection.create_ext(data,'.rel'+s.name,SHT_REL,0,symtabsect.index,s.index,4,2*sizeof(pint));
+           relocsect:=TElfObjSection.create_reloc(data,s.name,false);
+           relocsect.shlink:=symtabsect.index;
+           relocsect.shinfo:=s.index;
            { add the relocations }
            for i:=0 to s.Objrelocations.count-1 do
              begin
@@ -1158,11 +1237,7 @@ implementation
                    else
                      relsym:=SHN_UNDEF;
                  end;
-{$ifdef cpu64bitaddr}
-               rel.info:=(qword(relsym) shl 32) or reltyp;
-{$else cpu64bitaddr}
-               rel.info:=(relsym shl 8) or reltyp;
-{$endif cpu64bitaddr}
+               rel.info:=ELF_R_INFO(relsym,reltyp);
                { write reloc }
                { ElfXX_Rel is essentially ElfXX_Rela without the addend field. }
                MaybeSwapElfReloc(rel);
@@ -1283,11 +1358,11 @@ implementation
          begin
            { default sections }
            symtabsect:=TElfSymtab.create(data,esk_obj);
-           shstrtabsect:=TElfObjSection.create_ext(data,'.shstrtab',SHT_STRTAB,0,0,0,1,0);
+           shstrtabsect:=TElfObjSection.create_ext(data,'.shstrtab',SHT_STRTAB,0,1,0);
            { "no executable stack" marker for Linux }
            if (target_info.system in systems_linux) and
               not(cs_executable_stack in current_settings.moduleswitches) then
-             TElfObjSection.create_ext(data,'.note.GNU-stack',SHT_PROGBITS,0,0,0,1,0);
+             TElfObjSection.create_ext(data,'.note.GNU-stack',SHT_PROGBITS,0,1,0);
            { insert filename as first in strtab }
            symtabsect.fstrsec.writestr(ExtractFileName(current_module.mainsource));
            symtabsect.fstrsec.writestr(#0);

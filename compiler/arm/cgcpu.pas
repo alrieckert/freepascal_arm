@@ -933,9 +933,7 @@ unit cgcpu;
            ((op in [A_LDF,A_STF,A_FLDS,A_FLDD,A_FSTS,A_FSTD]) and
             ((ref.offset<-1020) or
              (ref.offset>1020) or
-             ((abs(ref.offset) mod 4)<>0) or
-             { the usual pc relative symbol handling assumes possible offsets of +/- 4095 }
-             assigned(ref.symbol)
+             ((abs(ref.offset) mod 4)<>0)
             )
            ) then
           begin
@@ -986,7 +984,10 @@ unit cgcpu;
             ref.symbol:=nil;
           end;
 
-        if (ref.base<>NR_NO) and (ref.index<>NR_NO) and (ref.offset<>0) then
+        { fold if there is base, index and offset, however, don't fold
+          for vfp memory instructions because we later fold the index }
+        if not(op in [A_FLDS,A_FLDD,A_FSTS,A_FSTD]) and
+           (ref.base<>NR_NO) and (ref.index<>NR_NO) and (ref.offset<>0) then
           begin
             if tmpreg<>NR_NO then
               a_op_const_reg_reg(list,OP_ADD,OS_ADDR,ref.offset,tmpreg,tmpreg)
@@ -1196,33 +1197,56 @@ unit cgcpu;
              conv_done:=true;
              if tcgsize2size[tosize]<=tcgsize2size[fromsize] then
                fromsize:=tosize;
-             case fromsize of
-               OS_8:
-                 list.concat(taicpu.op_reg_reg_const(A_AND,reg2,reg1,$ff));
-               OS_S8:
-                 begin
-                   do_shift(SM_LSL,24,reg1);
-                   if tosize=OS_16 then
-                     begin
-                       do_shift(SM_ASR,8,reg2);
-                       do_shift(SM_LSR,16,reg2);
-                     end
-                   else
-                     do_shift(SM_ASR,24,reg2);
-                 end;
-               OS_16:
-                 begin
-                   do_shift(SM_LSL,16,reg1);
-                   do_shift(SM_LSR,16,reg2);
-                 end;
-               OS_S16:
-                 begin
-                   do_shift(SM_LSL,16,reg1);
-                   do_shift(SM_ASR,16,reg2)
-                 end;
-               else
-                 conv_done:=false;
-             end;
+             if current_settings.cputype<cpu_armv6 then
+               case fromsize of
+                 OS_8:
+                   list.concat(taicpu.op_reg_reg_const(A_AND,reg2,reg1,$ff));
+                 OS_S8:
+                   begin
+                     do_shift(SM_LSL,24,reg1);
+                     if tosize=OS_16 then
+                       begin
+                         do_shift(SM_ASR,8,reg2);
+                         do_shift(SM_LSR,16,reg2);
+                       end
+                     else
+                       do_shift(SM_ASR,24,reg2);
+                   end;
+                 OS_16:
+                   begin
+                     do_shift(SM_LSL,16,reg1);
+                     do_shift(SM_LSR,16,reg2);
+                   end;
+                 OS_S16:
+                   begin
+                     do_shift(SM_LSL,16,reg1);
+                     do_shift(SM_ASR,16,reg2)
+                   end;
+                 else
+                   conv_done:=false;
+               end
+             else
+               case fromsize of
+                 OS_8:
+                   list.concat(taicpu.op_reg_reg_const(A_AND,reg2,reg1,$ff));
+                 OS_S8:
+                   begin
+                     if tosize=OS_16 then
+                       begin
+                         list.concat(taicpu.op_reg_reg_const(A_AND,reg2,reg1,$ff));
+                         list.concat(taicpu.op_reg_reg(A_SXTB16,reg2,reg2));
+                       end
+                     else
+                       list.concat(taicpu.op_reg_reg(A_SXTB,reg2,reg1));
+                   end;
+                 OS_16:
+                   list.concat(taicpu.op_reg_reg(A_UXTH,reg2,reg1));
+                 OS_S16:
+                   list.concat(taicpu.op_reg_reg(A_SXTH,reg2,reg1));
+                 else
+                   conv_done:=false;
+               end
+
            end;
          if not conv_done and (reg1<>reg2) then
            begin
@@ -3384,13 +3408,9 @@ unit cgcpu;
     procedure Tthumb2cgarm.g_flags2reg(list: TAsmList; size: TCgSize; const f: TResFlags; reg: TRegister);
       var item: taicpu;
       begin
-        item := setcondition(taicpu.op_reg_const(A_MOV,reg,1),flags_to_cond(f));
-        list.concat(item);
-        list.insertbefore(taicpu.op_cond(A_IT, flags_to_cond(f)), item);
-
-        item := setcondition(taicpu.op_reg_const(A_MOV,reg,0),inverse_cond(flags_to_cond(f)));
-        list.concat(item);
-        list.insertbefore(taicpu.op_cond(A_IT, inverse_cond(flags_to_cond(f))), item);
+        list.concat(taicpu.op_cond(A_ITE, flags_to_cond(f)));
+        list.concat(setcondition(taicpu.op_reg_const(A_MOV,reg,1),flags_to_cond(f)));
+        list.concat(setcondition(taicpu.op_reg_const(A_MOV,reg,0),inverse_cond(flags_to_cond(f))));
       end;
 
 
