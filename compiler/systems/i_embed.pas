@@ -80,13 +80,13 @@ unit i_embed;
                 varalignmin     : 0;
                 varalignmax     : 4;
                 localalignmin   : 4;
-                localalignmax   : 8;
+                localalignmax   : 4;
                 recordalignmin  : 0;
                 recordalignmax  : 4;
                 maxCrecordalign : 4
               );
             first_parm_offset : 8;
-            stacksize    : 262144;
+            stacksize    : 16384;
             abi : abi_default
           );
 

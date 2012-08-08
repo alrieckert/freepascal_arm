@@ -62,4 +62,35 @@ asm
   ldmfd sp!,{r4,r5,r6,r15}
 end;
 
+{$define FPC_SYSTEM_HAS_MUL_INT64}
+function fpc_mul_int64(f1,f2 : int64;checkoverflow : longbool) : int64;[public,alias: 'FPC_MUL_INT64']; compilerproc;
+var
+   sign : boolean;
+   q1,q2,q3 : qword;
+begin
+     begin
+        sign:=false;
+        if f1<0 then
+          begin
+             sign:=not(sign);
+             q1:=qword(-f1);
+          end
+        else
+          q1:=f1;
+        if f2<0 then
+          begin
+             sign:=not(sign);
+             q2:=qword(-f2);
+          end
+        else
+          q2:=f2;
+        { the q1*q2 is coded as call to mulqword }
+        q3:=q1*q2;
+
+        if sign then
+          fpc_mul_int64:=-q3
+        else
+          fpc_mul_int64:=q3;
+     end;
+end;
 

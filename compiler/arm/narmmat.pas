@@ -500,5 +500,5 @@ begin
   cmoddivnode:=tarmmoddivnode;
   cnotnode:=tarmnotnode;
   cunaryminusnode:=tarmunaryminusnode;
-  //cshlshrnode:=tarmshlshrnode;
+  cshlshrnode:=tarmshlshrnode;
 end.
