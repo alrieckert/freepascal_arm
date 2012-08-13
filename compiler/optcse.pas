@@ -1,7 +1,7 @@
 {
     Common subexpression elimination on base blocks
 
-    Copyright (c) 2005 by Florian Klaempfl
+    Copyright (c) 2005-2012 by Florian Klaempfl
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -34,13 +34,9 @@ unit optcse;
     {
       the function  creates non optimal code so far:
       - call para nodes are cse barriers because they can be reordered and thus the
-        temp. creation can be done too late
-      - cse's in chained expressions are not recognized: the common subexpression
-        in (a1 and b and c) vs. (a2 and b and c) is not recognized because there is no common
-        subtree b and c
+        temp. creation could be done too late
       - the cse knows nothing about register pressure. In case of high register pressure, cse might
         have a negative impact
-      - assignment nodes are currently cse borders: things like a[i,j]:=a[i,j]+1; are not improved
       - the list of cseinvariant node types and inline numbers is not complete yet
 
       Further, it could be done probably in a faster way though the complexity can't probably not reduced
@@ -50,7 +46,7 @@ unit optcse;
   implementation
 
     uses
-      globtype,
+      globtype,globals,
       cclasses,
       verbose,
       nutils,
@@ -64,7 +60,8 @@ unit optcse;
     const
       cseinvariant : set of tnodetype = [addn,muln,subn,divn,slashn,modn,andn,orn,xorn,notn,vecn,
         derefn,equaln,unequaln,ltn,gtn,lten,gten,typeconvn,subscriptn,
-        inn,symdifn,shrn,shln,ordconstn,realconstn,unaryminusn,pointerconstn,stringconstn,setconstn,
+        inn,symdifn,shrn,shln,ordconstn,realconstn,unaryminusn,pointerconstn,stringconstn,setconstn,niln,
+        setelementn,arrayconstructorn,arrayconstructorrangen,
         isn,asn,starstarn,nothingn,temprefn,loadparentfpn {,callparan},assignn];
 
     function searchsubdomain(var n:tnode; arg: pointer) : foreachnoderesult;
@@ -73,6 +70,7 @@ unit optcse;
           ((n.nodetype=inlinen) and
            (tinlinenode(n).inlinenumber in [in_assigned_x])
           ) or
+          ((n.nodetype=callparan) and not(assigned(tcallparanode(n).right))) or
           ((n.nodetype=loadn) and
             not((tloadnode(n).symtableentry.typ in [staticvarsym,localvarsym,paravarsym]) and
                 (vo_volatile in tabstractvarsym(tloadnode(n).symtableentry).varoptions))
@@ -121,7 +119,6 @@ unit optcse;
             result:=fen_norecurse_false;
             exit;
           end;
-        { so far, we can handle only nodes being read }
         if
           { node possible to add? }
           assigned(n.resultdef) and
@@ -133,8 +130,9 @@ unit optcse;
             (not(n.resultdef.typ in [arraydef,recorddef])) and
             { same for voiddef }
             not(is_void(n.resultdef)) and
-            { adding tempref nodes is worthless but their complexity is probably <= 1 anyways }
-            not(n.nodetype in [temprefn]) and
+            { adding tempref and callpara nodes itself is worthless but
+              their complexity is probably <= 1 anyways }
+            not(n.nodetype in [temprefn,callparan]) and
 
             { node worth to add?
 
@@ -151,7 +149,7 @@ unit optcse;
             }
             (not(n.nodetype=loadn) or
              not(tloadnode(n).symtableentry.typ in [paravarsym,localvarsym]) or
-             (tloadnode(n).symtable.symtablelevel<>current_procinfo.procdef.parast.symtablelevel)
+             (node_complexity(n)>1)
             ) and
 
             {
@@ -249,7 +247,22 @@ unit optcse;
                        B   C
                   Because A could be another tree of this kind, the whole process is done in a while loop
                 }
-                if (n.nodetype in [andn,orn,addn,muln]) then
+                if (n.nodetype in [andn,orn,addn,muln]) and
+                  (n.nodetype=tbinarynode(n).left.nodetype) and
+                  { do is optimizations only for integers, reals (no currency!), vectors, sets or booleans }
+                  (is_integer(n.resultdef) or is_real(n.resultdef) or is_vector(n.resultdef) or is_set(n.resultdef) or
+                   is_boolean(n.resultdef)) and
+                  { either if fastmath is on }
+                  ((cs_opt_fastmath in current_settings.optimizerswitches) or
+                   { or for the logical operators, they cannot overflow }
+                   (n.nodetype in [andn,orn]) or
+                   { or for integers if range checking is off }
+                   ((is_integer(n.resultdef) and
+                    (n.localswitches*[cs_check_range,cs_check_overflow]=[]) and
+                    (tbinarynode(n).left.localswitches*[cs_check_range,cs_check_overflow]=[]))) or
+                   { for sets, we can do this always }
+                   (is_set(n.resultdef))
+                   ) then
                   while n.nodetype=tbinarynode(n).left.nodetype do
                     begin
                       csedomain:=true;
@@ -352,9 +365,13 @@ unit optcse;
                         addrstored:=(def.typ in [arraydef,recorddef]) or is_object(def);
 
 {$if defined(csedebug) or defined(csestats)}
+                        writeln;
+                        writeln('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+                        writeln('Complexity: ',node_complexity(tnode(lists.nodelist[i])),'  Node ',i,' equals Node ',ptrint(lists.equalto[i]));
                         printnode(output,tnode(lists.nodelist[i]));
-                        writeln(i,'    equals   ',ptrint(lists.equalto[i]));
                         printnode(output,tnode(lists.nodelist[ptrint(lists.equalto[i])]));
+                        writeln('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+                        writeln;
 {$endif defined(csedebug) or defined(csestats)}
                         templist[i]:=templist[ptrint(lists.equalto[i])];
                         if addrstored then
@@ -412,6 +429,14 @@ unit optcse;
 
     function do_optcse(var rootnode : tnode) : tnode;
       begin
+{$ifdef csedebug}
+         writeln('====================================================================================');
+         writeln('CSE optimization pass started');
+         writeln('====================================================================================');
+         printnode(rootnode);
+         writeln('====================================================================================');
+         writeln;
+{$endif csedebug}
         foreachnodestatic(pm_postprocess,rootnode,@searchcsedomain,nil);
         result:=nil;
       end;

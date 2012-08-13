@@ -3389,14 +3389,13 @@ J*2Cv_Var/out parameter copy-out checking
 **2Mtp_TP/BP 7.0 compatibility mode
 **2Mmacpas_Macintosh Pascal dialects compatibility mode
 **1n_Do not read the default config files
-**1N<x>_Node tree optimizations
-**2Nu_Unroll loops
 **1o<x>_Change the name of the executable produced to <x>
 **1O<x>_Optimizations:
 **2O-_Disable optimizations
 **2O1_Level 1 optimizations (quick and debugger friendly)
 **2O2_Level 2 optimizations (-O1 + quick optimizations)
 **2O3_Level 3 optimizations (-O2 + slow optimizations)
+**2O3_Level 4 optimizations (-O3 + optimizations which might have unexpected side effects)
 **2Oa<x>=<y>_Set alignment
 **2Oo[NO]<x>_Enable or disable optimizations, see fpc -i for possible values
 **2Op<x>_Set target cpu for optimizing, see fpc -i for possible values

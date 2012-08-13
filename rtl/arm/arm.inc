@@ -499,6 +499,46 @@ end;
 {$endif}
 
 
+{$define FPC_SYSTEM_HAS_ANSISTR_DECR_REF}
+function fpc_freemem_x(p:pointer):ptrint; [external name 'FPC_FREEMEM_X'];
+
+Procedure fpc_ansistr_decr_ref (Var S : Pointer); [Public,Alias:'FPC_ANSISTR_DECR_REF'];assembler;nostackframe; compilerproc;
+asm
+  ldr     r1, [r0]
+  // On return the pointer will always be set to zero, so utilize the delay slots
+  mov     r2, #0
+  str     r2, [r0]
+
+  // Check for a zero string
+  cmp     r1, #0
+  // Load reference counter
+  ldrne   r2, [r1, #-8]
+{$if defined(cpuarmv3) or defined(cpuarmv4)}
+  moveq   pc,lr
+{$else}
+  bxeq    lr
+{$endif}
+  // Check for a constant string
+  cmp     r2, #0
+{$if defined(cpuarmv3) or defined(cpuarmv4)}
+  movlt   pc,lr
+{$else}
+  bxlt    lr
+{$endif}
+  stmfd   sp!, {r1, lr}
+  sub     r0, r1, #8
+  blx     InterLockedDecrement
+  // InterLockedDecrement is a nice guy and sets the z flag for us
+  // if the reference count dropped to 0
+  ldmnefd sp!, {r1, pc}
+  ldmfd sp!, {r0, lr}
+  // We currently can not use constant symbols in ARM-Assembly
+  // but we need to stay backward compatible with 2.6
+  sub     r0, r0, #12
+  // Jump without a link, so freemem directly returns to our caller
+  b       FPC_FREEMEM_X
+end;
+
 var
   fpc_system_lock: longint; export name 'fpc_system_lock';
 
@@ -511,11 +551,10 @@ asm
   strex r2, r1, [r0]
   cmp r2, #0
   bne .Lloop
-  mov r0, r1
+  movs r0, r1
   bx  lr
 {$else}
 {$if defined(LINUX) and defined(CPUARMEL)}
-
   stmfd r13!, {lr}
   mov r2, r0   // kuser_cmpxchg does not clobber r2 by definition
 .Latomic_dec_loop:
@@ -535,7 +574,9 @@ asm
   sub r1, r0, #1 // Decrement value
   blx r3	 // Call kuser_cmpxchg, sets C-Flag on success
 
-  movcs r0, r1	 // We expect that to work most of the time so keep it pipeline friendly
+  // MOVS sets the Z flag when the result reaches zero, this can be used later on
+  // The C-Flag will not be modified by this because we're not doing any shifting
+  movcss r0, r1	 // We expect that to work most of the time so keep it pipeline friendly
   ldmcsfd r13!, {pc}
   b .Latomic_dec_loop // kuser_cmpxchg sets C flag on error
 
@@ -551,7 +592,7 @@ asm
   ldr r1, [r0]
   sub r1, r1, #1
   str r1, [r0]
-  mov r0, r1
+  movs r0, r1
 // unlock and return
   str r2, [r3]
   bx  lr
@@ -562,6 +603,28 @@ asm
 {$endif}
 end;
 
+{$define FPC_SYSTEM_HAS_ANSISTR_INCR_REF}
+
+Procedure fpc_ansistr_incr_ref (S : Pointer); [Public,Alias:'FPC_ANSISTR_INCR_REF'];assembler;nostackframe; compilerproc;
+asm
+  // Null string?
+  cmp     r0, #0
+  // Load reference counter
+  ldrne   r1, [r0, #-8]
+  // pointer to counter, calculate here for delay slot utilization
+  subne   r0, r0, #8
+{$if defined(cpuarmv3) or defined(cpuarmv4)}
+  moveq   pc,lr
+{$else}
+  bxeq    lr
+{$endif}
+  // Check for a constant string
+  cmp     r1, #0
+  // Tailcall
+  // Hopefully the linker will place InterLockedIncrement as layed out here
+  bge     InterLockedIncrement
+  // Freepascal will generate a proper return here, save some cachespace
+end;
 
 function InterLockedIncrement (var Target: longint) : longint; assembler; nostackframe;
 asm
@@ -576,7 +639,6 @@ asm
   bx  lr
 {$else}
 {$if defined(LINUX) and defined(CPUARMEL)}
-
   stmfd r13!, {lr}
   mov r2, r0   // kuser_cmpxchg does not clobber r2 by definition
 .Latomic_inc_loop:
@@ -636,8 +698,50 @@ asm
   mov r0, r2
   bx  lr
 {$else}
-  swp r1, r1, [r0]
-  mov r0,r1
+{$if defined(LINUX) and defined(CPUARMEL)}
+  stmfd r13!, {r4, lr}
+  mov r2, r0   // kuser_cmpxchg does not clobber r2 (and r1) by definition
+.Latomic_add_loop:
+  ldr r0, [r2]   // Load the current value
+  mov r4, r0     // save the current value because kuser_cmpxchg clobbers r0
+
+  // We expect this to work without looping most of the time
+  // R3 gets clobbered in kuser_cmpxchg so in the unlikely case that we have to
+  // loop here again, we have to reload the value. Normaly this just fills the
+  // load stall-cycles from the above ldr so in reality we'll not get any additional
+  // delays because of this
+  // Don't use ldr to load r3 to avoid cacheline trashing
+  // Load 0xffff0fff into r3 and substract to 0xffff0fc0,
+  // the kuser_cmpxchg entry point
+  mvn r3, #0x0000f000
+  sub r3, r3, #0x3F
+
+  blx r3	 // Call kuser_cmpxchg, sets C-Flag on success
+  // restore the original value if needed
+  movcs   r0, r4
+  ldmcsfd r13!, {r4, pc}
+
+  b .Latomic_add_loop // kuser_cmpxchg failed, loop back
+{$else}
+// lock
+  ldr r3, .Lfpc_system_lock
+  mov r2, #1
+.Lloop:
+  swp r2, r2, [r3]
+  cmp r2, #0
+  bne .Lloop
+// do the job
+  ldr r2, [r0]
+  str r1, [r0]
+  mov r0, r2
+// unlock and return
+  mov r2, #0
+  str r2, [r3]
+  bx  lr
+
+.Lfpc_system_lock:
+  .long fpc_system_lock
+{$endif}
 {$endif}
 end;
 
@@ -654,7 +758,6 @@ asm
   bx  lr
 {$else}
 {$if defined(LINUX) and defined(CPUARMEL)}
-
   stmfd r13!, {r4, lr}
   mov r2, r0   // kuser_cmpxchg does not clobber r2 by definition
   mov r4, r1   // Save addend
@@ -721,7 +824,6 @@ asm
   bx       lr
 {$else}
 {$if defined(LINUX) and defined(CPUARMEL)}
-
   stmfd r13!, {r4, lr}
   mvn   r3, #0x0000f000
   sub   r3, r3, #0x3F
