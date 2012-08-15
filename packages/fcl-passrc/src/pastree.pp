@@ -437,9 +437,9 @@ type
   public
     function ElementTypeName: string; override;
   public
-//    IsValueUsed: Boolean;
-//    Value: Integer;
-    AssignedValue : string;
+    Value: TPasExpr;
+    Destructor Destroy; override;
+    Function AssignedValue : string;
   end;
 
   { TPasEnumType }
@@ -475,7 +475,7 @@ type
     constructor Create(const AName: string; AParent: TPasElement); override;
     destructor Destroy; override;
   public
-    Values: TStringList;
+    Values: TFPList;
     Members: TPasRecordType;
   end;
 
@@ -626,12 +626,12 @@ type
     function GetDeclaration(full : boolean) : string; override;
   public
     VarType: TPasType;
-    Value: string;
     VarModifiers : TVariableModifiers;
     LibraryName,ExportName : string;
     Modifiers : string;
     AbsoluteLocation : String;
     Expr: TPasExpr;
+    Function Value : String;
   end;
 
   { TPasExportSymbol }
@@ -880,13 +880,13 @@ type
     function AddIfElse(const ACondition: TPasExpr): TPasImplIfElse;
     function AddWhileDo(const ACondition: TPasExpr): TPasImplWhileDo;
     function AddWithDo(const Expression: TPasExpr): TPasImplWithDo;
-    function AddCaseOf(const Expression: string): TPasImplCaseOf;
+    function AddCaseOf(const Expression: TPasExpr): TPasImplCaseOf;
     function AddForLoop(AVar: TPasVariable;
       const AStartValue, AEndValue: TPasExpr): TPasImplForLoop;
     function AddForLoop(const AVarName : String; AStartValue, AEndValue: TPasExpr;
       ADownTo: Boolean = false): TPasImplForLoop;
     function AddTry: TPasImplTry;
-    function AddExceptOn(const VarName, TypeName: string): TPasImplExceptOn;
+    function AddExceptOn(const VarName, TypeName: TPasExpr): TPasImplExceptOn;
     function AddRaise: TPasImplRaise;
     function AddLabelMark(const Id: string): TPasImplLabelMark;
     function AddAssign(left, right: TPasExpr): TPasImplAssign;
@@ -978,8 +978,9 @@ type
     function AddCase(const Expression: TPasExpr): TPasImplCaseStatement;
     function AddElse: TPasImplCaseElse;
   public
-    Expression: string;
+    CaseExpr : TPasExpr;
     ElseBranch: TPasImplCaseElse;
+    function Expression: string;
   end;
 
   { TPasImplCaseStatement }
@@ -1077,13 +1078,20 @@ type
     destructor Destroy; override;
     procedure AddElement(Element: TPasImplElement); override;
   public
-    VariableName, TypeName: string;
+    VarExpr,TypeExpr : TPasExpr;
     Body: TPasImplElement;
+    Function VariableName : String;
+    Function TypeName: string;
   end;
 
   { TPasImplRaise }
 
   TPasImplRaise = class(TPasImplStatement)
+  public
+    destructor Destroy; override;
+  Public
+    ExceptObject,
+    ExceptAddr : TPasExpr;
   end;
 
   { TPassTreeVisitor }
@@ -1127,6 +1135,15 @@ const
 implementation
 
 uses SysUtils;
+
+{ TPasImplRaise }
+
+destructor TPasImplRaise.Destroy;
+begin
+  FreeAndNil(ExceptObject);
+  FreeAndNil(ExceptAddr);
+  Inherited;
+end;
 
 { TPasImplRepeatUntil }
 
@@ -1266,6 +1283,21 @@ function TPasRangeType.ElementTypeName: string; begin Result := SPasTreeRangeTyp
 function TPasArrayType.ElementTypeName: string; begin Result := SPasTreeArrayType end;
 function TPasFileType.ElementTypeName: string; begin Result := SPasTreeFileType end;
 function TPasEnumValue.ElementTypeName: string; begin Result := SPasTreeEnumValue end;
+
+destructor TPasEnumValue.Destroy;
+begin
+  FreeAndNil(Value);
+  inherited Destroy;
+end;
+
+function TPasEnumValue.AssignedValue: string;
+begin
+  If Assigned(Value) then
+    Result:=Value.GetDeclaration(True)
+  else
+    Result:='';
+end;
+
 function TPasEnumType.ElementTypeName: string; begin Result := SPasTreeEnumType end;
 function TPasSetType.ElementTypeName: string; begin Result := SPasTreeSetType end;
 function TPasRecordType.ElementTypeName: string; begin Result := SPasTreeRecordType end;
@@ -1562,11 +1594,17 @@ end;
 constructor TPasVariant.Create(const AName: string; AParent: TPasElement);
 begin
   inherited Create(AName, AParent);
-  Values := TStringList.Create;
+  Values := TFPList.Create;
 end;
 
 destructor TPasVariant.Destroy;
+
+Var
+  I : Integer;
+
 begin
+  For I:=0 to Values.Count-1 do
+    TObject(Values[i]).Free;
   Values.Free;
   if Assigned(Members) then
     Members.Release;
@@ -1703,6 +1741,7 @@ end;
 
 destructor TPasVariable.Destroy;
 begin
+//  FreeAndNil(Expr);
   { Attention, in derived classes, VarType isn't necessarily set!
     (e.g. in Constants) }
   if Assigned(VarType) then
@@ -1978,10 +2017,10 @@ begin
   AddElement(Result);
 end;
 
-function TPasImplBlock.AddCaseOf(const Expression: string): TPasImplCaseOf;
+function TPasImplBlock.AddCaseOf(const Expression: TPasExpr): TPasImplCaseOf;
 begin
   Result := TPasImplCaseOf.Create('', Self);
-  Result.Expression := Expression;
+  Result.CaseExpr:= Expression;
   AddElement(Result);
 end;
 
@@ -2012,12 +2051,12 @@ begin
   AddElement(Result);
 end;
 
-function TPasImplBlock.AddExceptOn(const VarName, TypeName: string
+function TPasImplBlock.AddExceptOn(const VarName, TypeName: TPasExpr
   ): TPasImplExceptOn;
 begin
   Result:=TPasImplExceptOn.Create('',Self);
-  Result.VariableName:=VarName;
-  Result.TypeName:=TypeName;
+  Result.VarExpr:=VarName;
+  Result.TypeExpr:=TypeName;
   AddElement(Result);
 end;
 
@@ -2402,9 +2441,8 @@ Const
 Var
   H : TPasMemberHint;
   B : Boolean;
+
 begin
-  if (Value = '') and Assigned(Expr) then
-    Value := Expr.GetDeclaration(full);
   If Assigned(VarType) then
     begin
     If VarType.Name='' then
@@ -2424,6 +2462,13 @@ begin
     end;
 end;
 
+
+function TPasVariable.Value: String;
+begin
+  If Assigned(Expr) then
+    Result:=Expr.GetDeclaration(True)
+end;
+
 function TPasProperty.GetDeclaration (full : boolean) : string;
 
 Var
@@ -2438,8 +2483,8 @@ begin
     else
       Result:=VarType.Name;
     end
-  else
-    Result:=Value;
+  else if Assigned(Expr) then
+    Result:=Expr.GetDeclaration(True);
   S:='';
   If Assigned(Args) and (Args.Count>0) then
     begin
@@ -2758,6 +2803,7 @@ end;
 
 destructor TPasImplCaseOf.Destroy;
 begin
+  FreeAndNil(CaseExpr);
   if Assigned(ElseBranch) then
     ElseBranch.Release;
   inherited Destroy;
@@ -2783,6 +2829,14 @@ begin
   Result:=TPasImplCaseElse.Create('',Self);
   ElseBranch:=Result;
   AddElement(Result);
+end;
+
+function TPasImplCaseOf.Expression: string;
+begin
+  if Assigned(CaseExpr) then
+    Result:=CaseExpr.GetDeclaration(True)
+  else
+    Result:='';
 end;
 
 { TPasImplCaseStatement }
@@ -2891,6 +2945,8 @@ end;
 
 destructor TPasImplExceptOn.Destroy;
 begin
+  FreeAndNil(VarExpr);
+  FreeAndNil(TypeExpr);
   if Assigned(Body) then
     Body.Release;
   inherited Destroy;
@@ -2904,6 +2960,22 @@ begin
     Body:=Element;
     Body.AddRef;
     end;
+end;
+
+function TPasImplExceptOn.VariableName: String;
+begin
+  If assigned(VarExpr) then
+    Result:=VarExpr.GetDeclaration(True)
+  else
+    Result:='';
+end;
+
+function TPasImplExceptOn.TypeName: string;
+begin
+  If assigned(TypeExpr) then
+    Result:=TypeExpr.GetDeclaration(True)
+  else
+    Result:='';
 end;
 
 { TPasImplStatement }
