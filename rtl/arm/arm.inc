@@ -213,7 +213,11 @@ end;
 
 {$ifndef FPC_SYSTEM_HAS_MOVE}
 {$define FPC_SYSTEM_HAS_MOVE}
+{$ifdef CPUARM_HAS_EDSP}
+procedure Move(const source;var dest;count:longint);[public, alias: 'FPC_MOVE'];assembler;nostackframe;
+{$else CPUARM_HAS_EDSP}
 procedure Move_pld(const source;var dest;count:longint);assembler;nostackframe;
+{$endif CPUARM_HAS_EDSP}
 asm
   pld [r0]
   // count <=0 ?
@@ -267,6 +271,7 @@ asm
   bne .Loverlapped
 end;
 
+{$ifndef CPUARM_HAS_EDSP}
 procedure Move_blended(const source;var dest;count:longint);assembler;nostackframe;
 asm
   // count <=0 ?
@@ -327,6 +332,7 @@ asm
 .Lmoveproc:
   .long moveproc
 end;
+{$endif CPUARM_HAS_EDSP}
 
 {$endif FPC_SYSTEM_HAS_MOVE}
 
@@ -527,7 +533,11 @@ asm
 {$endif}
   stmfd   sp!, {r1, lr}
   sub     r0, r1, #8
+{$ifdef CPUARM_HAS_BX}
   blx     InterLockedDecrement
+{$else}
+  bl      InterLockedDecrement
+{$endif}
   // InterLockedDecrement is a nice guy and sets the z flag for us
   // if the reference count dropped to 0
   ldmnefd sp!, {r1, pc}
@@ -703,7 +713,6 @@ asm
   mov r2, r0   // kuser_cmpxchg does not clobber r2 (and r1) by definition
 .Latomic_add_loop:
   ldr r0, [r2]   // Load the current value
-  mov r4, r0     // save the current value because kuser_cmpxchg clobbers r0
 
   // We expect this to work without looping most of the time
   // R3 gets clobbered in kuser_cmpxchg so in the unlikely case that we have to
@@ -715,6 +724,7 @@ asm
   // the kuser_cmpxchg entry point
   mvn r3, #0x0000f000
   sub r3, r3, #0x3F
+  mov r4, r0     // save the current value because kuser_cmpxchg clobbers r0
 
   blx r3	 // Call kuser_cmpxchg, sets C-Flag on success
   // restore the original value if needed
@@ -889,6 +899,7 @@ end;
 procedure fpc_cpucodeinit;
 begin
 {$ifdef FPC_SYSTEM_FPC_MOVE}
+{$ifndef CPUARM_HAS_EDSP}
   cpu_has_edsp:=true;
   in_edsp_test:=true;
   asm
@@ -900,6 +911,9 @@ begin
     moveproc:=@move_pld
   else
     moveproc:=@move_blended;
+{$else CPUARM_HAS_EDSP}
+  cpu_has_edsp:=true;
+{$endif CPUARM_HAS_EDSP}
 {$endif FPC_SYSTEM_FPC_MOVE}
 end;
 
