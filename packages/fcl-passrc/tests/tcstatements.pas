@@ -5,7 +5,7 @@ unit tcstatements;
 interface
 
 uses
-  Classes, SysUtils, fpcunit, testutils, pastree, pscanner, pparser,
+  Classes, SysUtils, fpcunit, pastree, pscanner, pparser,
   tcbaseparser, testregistry;
 
 Type
@@ -32,6 +32,10 @@ Type
     Procedure TestEmptyStatements;
     Procedure TestBlock;
     Procedure TestAssignment;
+    Procedure TestAssignmentAdd;
+    Procedure TestAssignmentMinus;
+    Procedure TestAssignmentMul;
+    Procedure TestAssignmentDivision;
     Procedure TestCall;
     Procedure TestCallQualified;
     Procedure TestCallQualified2;
@@ -132,10 +136,9 @@ end;
 
 function TTestStatementParser.TestStatement(ASource: array of string): TPasImplElement;
 
-Var
-  i : Integer;
 
 begin
+  Result:=Nil;
   FStatement:=Nil;
   AddStatements(ASource);
   ParseModule;
@@ -145,6 +148,7 @@ begin
   if (PasProgram.InitializationSection.Elements.Count>0) then
     if TObject(PasProgram.InitializationSection.Elements[0]) is TPasImplBlock then
       FStatement:=TPasImplBlock(PasProgram.InitializationSection.Elements[0]);
+  Result:=FStatement;
 end;
 
 procedure TTestStatementParser.ExpectParserError(Const Msg : string);
@@ -213,6 +217,72 @@ begin
   AssertEquals('1 statement',1,PasProgram.InitializationSection.Elements.Count);
   AssertEquals('Assignment statement',TPasImplAssign,Statement.ClassType);
   A:=Statement as TPasImplAssign;
+  AssertEquals('Normal assignment',akDefault,A.Kind);
+  AssertExpression('Right side is constant',A.Right,pekNumber,'1');
+  AssertExpression('Left side is variable',A.Left,pekIdent,'a');
+end;
+
+procedure TTestStatementParser.TestAssignmentAdd;
+
+Var
+  A : TPasImplAssign;
+
+begin
+  Parser.Scanner.Options:=[po_cassignments];
+  DeclareVar('integer');
+  TestStatement(['a+=1;']);
+  AssertEquals('1 statement',1,PasProgram.InitializationSection.Elements.Count);
+  AssertEquals('Assignment statement',TPasImplAssign,Statement.ClassType);
+  A:=Statement as TPasImplAssign;
+  AssertEquals('Add assignment',akAdd,A.Kind);
+  AssertExpression('Right side is constant',A.Right,pekNumber,'1');
+  AssertExpression('Left side is variable',A.Left,pekIdent,'a');
+end;
+
+procedure TTestStatementParser.TestAssignmentMinus;
+Var
+  A : TPasImplAssign;
+
+begin
+  Parser.Scanner.Options:=[po_cassignments];
+  DeclareVar('integer');
+  TestStatement(['a-=1;']);
+  AssertEquals('1 statement',1,PasProgram.InitializationSection.Elements.Count);
+  AssertEquals('Assignment statement',TPasImplAssign,Statement.ClassType);
+  A:=Statement as TPasImplAssign;
+  AssertEquals('Minus assignment',akMinus,A.Kind);
+  AssertExpression('Right side is constant',A.Right,pekNumber,'1');
+  AssertExpression('Left side is variable',A.Left,pekIdent,'a');
+end;
+
+procedure TTestStatementParser.TestAssignmentMul;
+Var
+  A : TPasImplAssign;
+
+begin
+  Parser.Scanner.Options:=[po_cassignments];
+  DeclareVar('integer');
+  TestStatement(['a*=1;']);
+  AssertEquals('1 statement',1,PasProgram.InitializationSection.Elements.Count);
+  AssertEquals('Assignment statement',TPasImplAssign,Statement.ClassType);
+  A:=Statement as TPasImplAssign;
+  AssertEquals('Mul assignment',akMul,A.Kind);
+  AssertExpression('Right side is constant',A.Right,pekNumber,'1');
+  AssertExpression('Left side is variable',A.Left,pekIdent,'a');
+end;
+
+procedure TTestStatementParser.TestAssignmentDivision;
+Var
+  A : TPasImplAssign;
+
+begin
+  Parser.Scanner.Options:=[po_cassignments];
+  DeclareVar('integer');
+  TestStatement(['a/=1;']);
+  AssertEquals('1 statement',1,PasProgram.InitializationSection.Elements.Count);
+  AssertEquals('Assignment statement',TPasImplAssign,Statement.ClassType);
+  A:=Statement as TPasImplAssign;
+  AssertEquals('Division assignment',akDivision,A.Kind);
   AssertExpression('Right side is constant',A.Right,pekNumber,'1');
   AssertExpression('Left side is variable',A.Left,pekIdent,'a');
 end;
@@ -377,9 +447,6 @@ end;
 
 procedure TTestStatementParser.TestIfSemiColonElseError;
 
-Var
-  I : TPasImplIfElse;
-
 begin
   DeclareVar('boolean');
   ExpectParserError('No semicolon before else',['if a then','  begin','  end;','else','  begin','  end']);
@@ -387,7 +454,7 @@ end;
 
 procedure TTestStatementParser.TestNestedIf;
 Var
-  I,I2 : TPasImplIfElse;
+  I : TPasImplIfElse;
 begin
   DeclareVar('boolean');
   DeclareVar('boolean','b');
@@ -405,7 +472,7 @@ end;
 procedure TTestStatementParser.TestNestedIfElse;
 
 Var
-  I,I2 : TPasImplIfElse;
+  I : TPasImplIfElse;
 
 begin
   DeclareVar('boolean');
@@ -895,8 +962,6 @@ procedure TTestStatementParser.TestCaseIfCaseElse;
 
 Var
   C : TPasImplCaseOf;
-  S : TPasImplCaseStatement;
-  B : TPasImplbeginBlock;
 
 begin
   DeclareVar('integer');
@@ -915,7 +980,6 @@ procedure TTestStatementParser.TestCaseIfElse;
 Var
   C : TPasImplCaseOf;
   S : TPasImplCaseStatement;
-  B : TPasImplbeginBlock;
 
 begin
   DeclareVar('integer');
@@ -1280,7 +1344,6 @@ Var
   E : TPasImplTryExcept;
   O : TPasImplExceptOn;
   EE : TPasImplTryExceptElse;
-  I : TPasImplIfElse;
 
 begin
   TestStatement(['Try','  DoSomething;','except','On E : Exception do','DoSomethingElse;','else','DoSomethingMore;','end']);

@@ -505,6 +505,7 @@ end;
 {$endif}
 
 
+{$ifndef darwin}
 {$define FPC_SYSTEM_HAS_ANSISTR_DECR_REF}
 function fpc_freemem_x(p:pointer):ptrint; [external name 'FPC_FREEMEM_X'];
 
@@ -533,7 +534,7 @@ asm
 {$endif}
   stmfd   sp!, {r1, lr}
   sub     r0, r1, #8
-{$ifdef CPUARM_HAS_BX}
+{$ifdef CPUARM_HAS_BLX}
   blx     InterLockedDecrement
 {$else}
   bl      InterLockedDecrement
@@ -548,6 +549,7 @@ asm
   // Jump without a link, so freemem directly returns to our caller
   b       FPC_FREEMEM_X
 end;
+{$endif not darwin}
 
 var
   fpc_system_lock: longint; export name 'fpc_system_lock';
@@ -613,6 +615,8 @@ asm
 {$endif}
 end;
 
+
+{$ifndef darwin}
 {$define FPC_SYSTEM_HAS_ANSISTR_INCR_REF}
 
 Procedure fpc_ansistr_incr_ref (S : Pointer); [Public,Alias:'FPC_ANSISTR_INCR_REF'];assembler;nostackframe; compilerproc;
@@ -635,6 +639,7 @@ asm
   bge     InterLockedIncrement
   // Freepascal will generate a proper return here, save some cachespace
 end;
+{$endif not darwin}
 
 function InterLockedIncrement (var Target: longint) : longint; assembler; nostackframe;
 asm
@@ -942,7 +947,7 @@ is bigger than the gain of the optimized function.
 function AsmSwapEndian(const AValue: SmallInt): SmallInt;{$ifdef SYSTEMINLINE}inline;{$endif};assembler;nostackframe;
 asm
 	// We're starting with 4321
-{$if defined(CPUARM_HAS_REV) and (FPC_FULLVERSION > 20600)}
+{$if defined(CPUARM_HAS_REV)}
 	rev r0, r0		// Reverse byteorder    r0 = 1234
 	mov r0, r0, shr #16	// Shift down to 16bits r0 = 0012
 {$else}
@@ -981,7 +986,7 @@ end;
 function SwapEndian(const AValue: Int64): Int64; assembler; nostackframe;
 asm
 // fpc >2.6.0 adds the "rev" instruction in the internal assembler
-{$if defined(CPUARM_HAS_REV) and (FPC_FULLVERSION > 20600)}
+{$if defined(CPUARM_HAS_REV)}
         rev r2, r0
         rev r0, r1
         mov r1, r2

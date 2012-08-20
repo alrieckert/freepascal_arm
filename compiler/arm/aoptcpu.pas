@@ -21,19 +21,17 @@
  ****************************************************************************
 }
 
-
 Unit aoptcpu;
 
 {$i fpcdefs.inc}
 
+{$define DEBUG_PREREGSCHEDULER}
+
 Interface
 
-uses cgbase, cpubase, aasmtai, aopt, aoptcpub, aoptobj;
+uses cgbase, cpubase, aasmtai, aasmcpu,aopt, aoptcpub, aoptobj;
 
 Type
-
-  { TCpuAsmOptimizer }
-
   TCpuAsmOptimizer = class(TAsmOptimizer)
     { uses the same constructor as TAopObj }
     function PeepHoleOptPass1Cpu(var p: tai): boolean; override;
@@ -44,8 +42,9 @@ Type
                                      var AllUsedRegs: TAllUsedRegs): Boolean;
   End;
 
-  TCpuPreRegallocScheduler = class(TAsmOptimizer)
-    function PeepHoleOptPass1Cpu(var p: tai): boolean;override;
+  TCpuPreRegallocScheduler = class(TAsmScheduler)
+    function SchedulerPass1Cpu(var p: tai): boolean;override;
+    procedure SwapRegLive(p, hp1: taicpu);
   end;
 
   TCpuThumb2AsmOptimizer = class(TCpuAsmOptimizer)
@@ -59,8 +58,8 @@ Implementation
     cutils,verbose,globals,
     systems,
     cpuinfo,
-    cgutils,procinfo,
-    aasmbase,aasmdata,aasmcpu;
+    cgobj,cgutils,procinfo,
+    aasmbase,aasmdata;
 
   function CanBeCond(p : tai) : boolean;
     begin
@@ -698,7 +697,9 @@ Implementation
                         else if taicpu(hp1).opcode=A_MOV then
                           while MatchInstruction(hp1, A_MOV, [taicpu(p).condition], [taicpu(p).oppostfix]) and
                                 (taicpu(hp1).ops = 2) and
-                                MatchOperand(taicpu(p).oper[0]^, taicpu(hp1).oper[0]^) do
+                                MatchOperand(taicpu(p).oper[0]^, taicpu(hp1).oper[0]^) and
+                                { don't remove the first mov if the second is a mov rX,rX }
+                                not(MatchOperand(taicpu(hp1).oper[0]^, taicpu(hp1).oper[1]^)) do
                             begin
                               asml.insertbefore(tai_comment.Create(strpnew('Peephole MovMov done')), p);
                               asml.remove(p);
@@ -1112,7 +1113,88 @@ Implementation
     opcode_could_mem_write = [A_B,A_BL,A_BLX,A_BKPT,A_BX,A_STR,A_STRB,A_STRBT,
                               A_STRH,A_STRT,A_STF,A_SFM,A_STM,A_FSTS,A_FSTD];
 
-  function TCpuPreRegallocScheduler.PeepHoleOptPass1Cpu(var p: tai): boolean;
+
+  { adjust the register live information when swapping the two instructions p and hp1,
+    they must follow one after the other }
+  procedure TCpuPreRegallocScheduler.SwapRegLive(p,hp1 : taicpu);
+
+    procedure CheckLiveEnd(reg : tregister);
+      var
+        supreg : TSuperRegister;
+        regtype : TRegisterType;
+      begin
+        if reg=NR_NO then
+          exit;
+        regtype:=getregtype(reg);
+        supreg:=getsupreg(reg);
+        if (cg.rg[regtype].live_end[supreg]=hp1) and
+          RegInInstruction(reg,p) then
+          cg.rg[regtype].live_end[supreg]:=p;
+      end;
+
+
+    procedure CheckLiveStart(reg : TRegister);
+      var
+        supreg : TSuperRegister;
+        regtype : TRegisterType;
+      begin
+        if reg=NR_NO then
+          exit;
+        regtype:=getregtype(reg);
+        supreg:=getsupreg(reg);
+        if (cg.rg[regtype].live_start[supreg]=p) and
+          RegInInstruction(reg,hp1) then
+         cg.rg[regtype].live_start[supreg]:=hp1;
+      end;
+
+    var
+      i : longint;
+      r : TSuperRegister;
+    begin
+      { assumption: p is directly followed by hp1 }
+
+      { if live of any reg used by p starts at p and hp1 uses this register then
+        set live start to hp1 }
+      for i:=0 to p.ops-1 do
+        case p.oper[i]^.typ of
+          Top_Reg:
+            CheckLiveStart(p.oper[i]^.reg);
+          Top_Ref:
+            begin
+              CheckLiveStart(p.oper[i]^.ref^.base);
+              CheckLiveStart(p.oper[i]^.ref^.index);
+            end;
+          Top_Shifterop:
+            CheckLiveStart(p.oper[i]^.shifterop^.rs);
+          Top_RegSet:
+            for r:=RS_R0 to RS_R15 do
+               if r in p.oper[i]^.regset^ then
+                 CheckLiveStart(newreg(R_INTREGISTER,r,R_SUBWHOLE));
+        end;
+
+      { if live of any reg used by hp1 ends at hp1 and p uses this register then
+        set live end to p }
+      for i:=0 to hp1.ops-1 do
+        case hp1.oper[i]^.typ of
+          Top_Reg:
+            CheckLiveEnd(hp1.oper[i]^.reg);
+          Top_Ref:
+            begin
+              CheckLiveEnd(hp1.oper[i]^.ref^.base);
+              CheckLiveEnd(hp1.oper[i]^.ref^.index);
+            end;
+          Top_Shifterop:
+            CheckLiveStart(hp1.oper[i]^.shifterop^.rs);
+          Top_RegSet:
+            for r:=RS_R0 to RS_R15 do
+               if r in hp1.oper[i]^.regset^ then
+                 CheckLiveEnd(newreg(R_INTREGISTER,r,R_SUBWHOLE));
+        end;
+    end;
+
+
+  function TCpuPreRegallocScheduler.SchedulerPass1Cpu(var p: tai): boolean;
+
   { TODO : schedule also forward }
   { TODO : schedule distance > 1 }
     var
@@ -1120,21 +1202,20 @@ Implementation
       list : TAsmList;
     begin
       result:=true;
+
       list:=TAsmList.Create;
-      p := BlockStart;
-      { UsedRegs := []; }
-      while (p <> BlockEnd) Do
+      p:=BlockStart;
+      while p<>BlockEnd Do
         begin
           if (p.typ=ait_instruction) and
             GetNextInstruction(p,hp1) and
             (hp1.typ=ait_instruction) and
+            (taicpu(hp1).opcode in [A_LDR,A_LDRB,A_LDRH,A_LDRSB,A_LDRSH]) and
             { for now we don't reschedule if the previous instruction changes potentially a memory location }
             ( (not(taicpu(p).opcode in opcode_could_mem_write) and
-               not(RegModifiedByInstruction(NR_PC,p)) and
-               (taicpu(hp1).opcode in [A_LDR,A_LDRB,A_LDRH,A_LDRSB,A_LDRSH])
+               not(RegModifiedByInstruction(NR_PC,p))
               ) or
               ((taicpu(p).opcode in [A_STM,A_STRB,A_STRH,A_STR]) and
-               (taicpu(hp1).opcode in [A_LDR,A_LDRB,A_LDRH,A_LDRSB,A_LDRSH]) and
                ((taicpu(hp1).oper[1]^.ref^.base=NR_PC) or
                 (assigned(taicpu(hp1).oper[1]^.ref^.symboldata) and
                 (taicpu(hp1).oper[1]^.ref^.offset=0)
@@ -1142,7 +1223,6 @@ Implementation
                ) or
                { try to prove that the memory accesses don't overlapp }
                ((taicpu(p).opcode in [A_STRB,A_STRH,A_STR]) and
-                (taicpu(hp1).opcode in [A_LDR,A_LDRB,A_LDRH,A_LDRSB,A_LDRSH]) and
                 (taicpu(p).oper[1]^.ref^.base=taicpu(hp1).oper[1]^.ref^.base) and
                 (taicpu(p).oppostfix=PF_None) and
                 (taicpu(hp1).oppostfix=PF_None) and
@@ -1187,9 +1267,12 @@ Implementation
                       list.Concat(hp4);
                     end
                   else
-                  hp3:=tai(hp3.Previous);
+                    hp3:=tai(hp3.Previous);
                 end;
+
               list.Concat(p);
+              SwapRegLive(taicpu(p),taicpu(hp1));
+
               { after the instruction? }
               while assigned(hp5) and (hp5.typ<>ait_instruction) do
                 begin
@@ -1202,7 +1285,7 @@ Implementation
                       list.Concat(hp4);
                     end
                   else
-                  hp5:=tai(hp5.Next);
+                    hp5:=tai(hp5.Next);
                 end;
 
               asml.Remove(hp1);
@@ -1211,8 +1294,12 @@ Implementation
 {$endif DEBUG_PREREGSCHEDULER}
               asml.InsertBefore(hp1,hp2);
               asml.InsertListBefore(hp2,list);
-            end;
-          p := tai(p.next)
+              p:=tai(p.next)
+            end
+          else if p.typ=ait_instruction then
+            p:=hp1
+          else
+            p:=tai(p.next);
         end;
       list.Free;
     end;

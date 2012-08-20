@@ -1101,16 +1101,16 @@ Const
 
    level1optimizerswitches = genericlevel1optimizerswitches;
    level2optimizerswitches = genericlevel2optimizerswitches + level1optimizerswitches +
-     [cs_opt_regvar,cs_opt_stackframe,cs_opt_tailrecursion,cs_opt_nodecse {,cs_opt_scheduler}];
-   level3optimizerswitches = genericlevel3optimizerswitches + level2optimizerswitches + [{,cs_opt_loopunroll}];
+     [cs_opt_regvar,cs_opt_stackframe,cs_opt_tailrecursion,cs_opt_nodecse];
+   level3optimizerswitches = genericlevel3optimizerswitches + level2optimizerswitches + [cs_opt_scheduler{,cs_opt_loopunroll}];
    level4optimizerswitches = genericlevel4optimizerswitches + level3optimizerswitches + [];
 
  type
    tcpuflags =
-      (CPUARM_HAS_BX,
-       CPUARM_HAS_BLX,
-       CPUARM_HAS_EDSP,
-       CPUARM_HAS_REV,
+      (CPUARM_HAS_BX,    { CPU supports the BX instruction                           }
+       CPUARM_HAS_BLX,   { CPU supports the BLX instruction                          }
+       CPUARM_HAS_EDSP,  { CPU supports the PLD,STRD,LDRD,MCRR and MRRC instructions }
+       CPUARM_HAS_REV,   { CPU supports the REV instruction                          }
        CPUARM_HAS_LDREX,
        CPUARM_HAS_IDIV
       );
