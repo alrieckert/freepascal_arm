@@ -236,6 +236,10 @@ begin
       ct_stm32f103re,
       ct_stm32f103c4t,
 
+      ct_stm32f051x4,
+      ct_stm32f051x6,
+      ct_stm32f051x8,
+
       { TI - 64 K Flash, 16 K SRAM Devices }
       ct_lm3s1110,
       ct_lm3s1133,

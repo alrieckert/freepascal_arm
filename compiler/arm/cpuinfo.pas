@@ -93,6 +93,11 @@ Type
       ct_stm32f103re,
       ct_stm32f103c4t,
 
+      { STMicroelectronics F0 - CORTEX M0}
+      ct_stm32f051x4,
+      ct_stm32f051x6,
+      ct_stm32f051x8,
+
       { TI - Fury Class - 64 K Flash, 16 K SRAM Devices }
       ct_lm3s1110,
       ct_lm3s1133,
@@ -405,6 +410,37 @@ Const
         flashsize:$00004000;
         srambase:$20000000;
         sramsize:$00001800
+        ),
+
+      	// ct_stm32f051x4,
+        (
+    	controllertypestr:'STM32F051X4';
+        controllerunitstr:'STM32F0XX';
+        interruptvectors:72;
+        flashbase:$08000000;
+        flashsize:$00004000;
+        srambase:$20000000;
+        sramsize:$00001000
+        ),
+        // ct_stm32f051x6,
+        (
+    	controllertypestr:'STM32F051X6';
+        controllerunitstr:'STM32F0XX';
+        interruptvectors:72;
+        flashbase:$08000000;
+        flashsize:$00008000;
+        srambase:$20000000;
+        sramsize:$00001000
+        ),
+        // ct_stm32f051x8,
+        (
+    	controllertypestr:'STM32F051X8';
+        controllerunitstr:'STM32F0XX';
+        interruptvectors:72;
+        flashbase:$08000000;
+        flashsize:$00010000;
+        srambase:$20000000;
+        sramsize:$00002000
         ),
 
       { TI - 64 K Flash, 16 K SRAM Devices }
