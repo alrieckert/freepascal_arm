@@ -271,7 +271,7 @@ type
 
 //======================================================================
 type
-  TPortRegisters = record
+  TGPIORegisters = record
     MODER : dword;       
     OTYPER : word;       
     RESERVED0 : word;    
@@ -416,11 +416,11 @@ type
 {$ALIGN 2}
 var
   // GPIO 
-  PortA: TPortRegisters        absolute (AHB2PERIPH_BASE + $00000000);
-  PortB: TPortRegisters        absolute (AHB2PERIPH_BASE + $00000400);
-  PortC: TPortRegisters        absolute (AHB2PERIPH_BASE + $00000800);
-  PortD: TPortRegisters        absolute (AHB2PERIPH_BASE + $00000C00);
-  PortF: TPortRegisters        absolute (AHB2PERIPH_BASE + $00001400);
+  GPIOA: TGPIORegisters        absolute (AHB2PERIPH_BASE + $00000000);
+  GPIOB: TGPIORegisters        absolute (AHB2PERIPH_BASE + $00000400);
+  GPIOC: TGPIORegisters        absolute (AHB2PERIPH_BASE + $00000800);
+  GPIOD: TGPIORegisters        absolute (AHB2PERIPH_BASE + $00000C00);
+  GPIOF: TGPIORegisters        absolute (AHB2PERIPH_BASE + $00001400);
 
   // Timers
   Timer1: TTimerRegisters      absolute (APBPERIPH_BASE + $00012C00);
