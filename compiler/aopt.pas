@@ -25,6 +25,8 @@ Unit aopt;
 
 {$i fpcdefs.inc}
 
+{ $define DEBUG_OPTALLOC}
+
   Interface
 
     Uses
@@ -183,10 +185,11 @@ Unit aopt;
                         ExcludeRegFromUsedRegs(tai_regalloc(p).Reg,Regs);
                         hp1 := p;
                         hp2 := nil;
-                        While Not(FindRegAlloc(tai_regalloc(p).Reg, tai(hp1.Next))) And
+                        While Not(assigned(FindRegAlloc(tai_regalloc(p).Reg, tai(hp1.Next)))) And
                               GetNextInstruction(hp1, hp1) And
                               RegInInstruction(tai_regalloc(p).Reg, hp1) Do
                           hp2 := hp1;
+                        { move deallocations }
                         If hp2 <> nil Then
                           Begin
                             hp1 := tai(p.previous);
@@ -195,13 +198,23 @@ Unit aopt;
 {$endif DEBUG_OPTALLOC}
                             AsmL.Remove(p);
                             InsertLLItem(hp2, tai(hp2.Next), p);
+                            { don't remove this deallocation later on when merging dealloc/alloc pairs because
+                              it marks indenpendent use of a register
+
+                              This could be also achieved by a separate passes for merging first and then later
+                              moving but I did not choose this solution because it takes more time and code (FK) }
+                            tai_regalloc(p).keep:=true;
 {$ifdef DEBUG_OPTALLOC}
                             AsmL.InsertAfter(tai_comment.Create(strpnew('Moved deallocation of '+std_regname(tai_regalloc(p).Reg)+' here')),hp2);
 {$endif DEBUG_OPTALLOC}
                             p := hp1;
                           End
-                        else if findregalloc(tai_regalloc(p).reg, tai(p.next))
-                          and getnextinstruction(p,hp1) then
+                        { merge allocations/deallocations }
+                        else if assigned(findregalloc(tai_regalloc(p).reg, tai(p.next)))
+                          and getnextinstruction(p,hp1) and
+                          { don't merge deallocations/allocation which mark a new use of register, this
+                            enables more possibilities for the peephole optimizer }
+                          not(tai_regalloc(p).keep) then
                           begin
                             hp1 := tai(p.previous);
 {$ifdef DEBUG_OPTALLOC}
@@ -210,8 +223,6 @@ Unit aopt;
                             AsmL.remove(p);
                             p.free;
                             p := hp1;
-      //                      don't include here, since then the allocation will be removed when it's processed
-      //                      include(usedregs,supreg);
                           end;
                       End
                   End

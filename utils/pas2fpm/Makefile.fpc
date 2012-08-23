@@ -1,17 +1,17 @@
 #
-#   Makefile.fpc for pas2ut
+#   Makefile.fpc for pas2fpm
 #
 
 [package]
-name=pas2ut
+name=pas2fpm
 version=2.7.1
 
 [require]
 packages=fcl-passrc fcl-base
 
 [target]
-programs=pas2ut
-rst=pas2ut
+programs=pas2fpm
+rst=pas2fpm
 
 [compiler]
 options=-S2h
@@ -24,5 +24,5 @@ fpcdir=../..
 
 [rules]
 .NOTPARALLEL:
-pas2ut$(EXEEXT): pas2ut.pp
+pas2fm$(EXEEXT): pas2fpm.pp
 

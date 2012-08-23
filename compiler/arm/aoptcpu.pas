@@ -40,6 +40,12 @@ Type
     procedure RemoveSuperfluousMove(const p: tai; movp: tai; const optimizer: string);
     function RegUsedAfterInstruction(reg: Tregister; p: tai;
                                      var AllUsedRegs: TAllUsedRegs): Boolean;
+    { gets the next tai object after current that contains info relevant
+      to the optimizer in p1 which used the given register or does a 
+      change in program flow.
+      If there is none, it returns false and
+      sets p1 to nil                                                     }
+    Function GetNextInstructionUsingReg(Current: tai; Var Next: tai;reg : TRegister): Boolean;
   End;
 
   TCpuPreRegallocScheduler = class(TAsmScheduler)
@@ -246,7 +252,7 @@ Implementation
   function TCpuAsmOptimizer.RegUsedAfterInstruction(reg: Tregister; p: tai;
     var AllUsedRegs: TAllUsedRegs): Boolean;
     begin
-      AllUsedRegs[getregtype(reg)].Update(tai(p.Next));
+      AllUsedRegs[getregtype(reg)].Update(tai(p.Next),true);
       RegUsedAfterInstruction :=
         AllUsedRegs[getregtype(reg)].IsUsed(reg) and
         not(regLoadedWithNewValue(reg,p)) and
@@ -257,29 +263,74 @@ Implementation
         );
     end;
 
+
+  function TCpuAsmOptimizer.GetNextInstructionUsingReg(Current: tai;
+    var Next: tai; reg: TRegister): Boolean;
+    begin
+      Next:=Current;
+      repeat
+        Result:=GetNextInstruction(Next,Next);
+      until not(Result) or (Next.typ<>ait_instruction) or (RegInInstruction(reg,Next)) or
+        (is_calljmp(taicpu(Next).opcode)) or (RegInInstruction(NR_PC,Next));
+    end;
+
+
   procedure TCpuAsmOptimizer.RemoveSuperfluousMove(const p: tai; movp: tai; const optimizer: string);
     var
-      TmpUsedRegs: TAllUsedRegs;
+      alloc,
+      dealloc : tai_regalloc;
+      hp1 : tai;
     begin
       if MatchInstruction(movp, A_MOV, [taicpu(p).condition], [PF_None]) and
          (taicpu(movp).ops=2) and {We can't optimize if there is a shiftop}
          MatchOperand(taicpu(movp).oper[1]^, taicpu(p).oper[0]^.reg) and
+         { don't mess with moves to pc }
+         (taicpu(movp).oper[0]^.reg<>NR_PC) and
+         { don't mess with moves to lr }
+         (taicpu(movp).oper[0]^.reg<>NR_R14) and
+         { the destination register of the mov might not be used beween p and movp }
+         not(RegUsedBetween(taicpu(movp).oper[0]^.reg,p,movp)) and
          {There is a special requirement for MUL and MLA, oper[0] and oper[1] are not allowed to be the same}
          not (
            (taicpu(p).opcode in [A_MLA, A_MUL]) and
            (taicpu(p).oper[1]^.reg = taicpu(movp).oper[0]^.reg)
          ) then
         begin
-          CopyUsedRegs(TmpUsedRegs);
-          UpdateUsedRegs(TmpUsedRegs, tai(p.next));
-          if not(RegUsedAfterInstruction(taicpu(p).oper[0]^.reg,movp,TmpUsedRegs)) then
+          dealloc:=FindRegDeAlloc(taicpu(p).oper[0]^.reg,tai(movp.Next));
+          if assigned(dealloc) then
             begin
               asml.insertbefore(tai_comment.Create(strpnew('Peephole '+optimizer+' removed superfluous mov')), movp);
+
+              { taicpu(p).oper[0]^.reg is not used anymore, try to find its allocation
+                and remove it if possible }
+              GetLastInstruction(p,hp1);
+              asml.Remove(dealloc);
+              alloc:=FindRegAlloc(taicpu(p).oper[0]^.reg,tai(hp1.Next));
+              if assigned(alloc) then
+                begin
+                  asml.Remove(alloc);
+                  alloc.free;
+                  dealloc.free;
+                end
+              else
+                asml.InsertAfter(dealloc,p);
+
+              { try to move the allocation of the target register }
+              GetLastInstruction(movp,hp1);
+              alloc:=FindRegAlloc(taicpu(movp).oper[0]^.reg,tai(hp1.Next));
+              if assigned(alloc) then
+                begin
+                  asml.Remove(alloc);
+                  asml.InsertBefore(alloc,p);
+                  { adjust used regs }
+                  IncludeRegInUsedRegs(taicpu(movp).oper[0]^.reg,UsedRegs);
+                end;
+
+              { finally get rid of the mov }
               taicpu(p).loadreg(0,taicpu(movp).oper[0]^.reg);
               asml.remove(movp);
               movp.free;
             end;
-          ReleaseUsedRegs(TmpUsedRegs);
         end;
     end;
 
@@ -466,7 +517,7 @@ Implementation
                         * ldr+mov have the same conditions
                         * mov does not set flags
                     }
-                    if (taicpu(p).oppostfix<>PF_D) and GetNextInstruction(p, hp1) then
+                    if (taicpu(p).oppostfix<>PF_D) and GetNextInstructionUsingReg(p, hp1, taicpu(p).oper[0]^.reg) then
                       RemoveSuperfluousMove(p, hp1, 'LdrMov2Ldr');
                   end;
                 A_MOV:
@@ -843,7 +894,7 @@ Implementation
                       In the future this might be handled in RedundantMovProcess when it uses RegisterTracking
                     }
                     if (taicpu(p).opcode = A_MOV) and 
-                        GetNextInstruction(p, hp1) then
+                        GetNextInstructionUsingReg(p, hp1, taicpu(p).oper[0]^.reg) then
                       RemoveSuperfluousMove(p, hp1, 'MovMov2Mov');
                   end;
                 A_ADD,
@@ -888,7 +939,7 @@ Implementation
                       to
                       add reg2, ...
                     }
-                    if GetNextInstruction(p, hp1) then
+                    if GetNextInstructionUsingReg(p, hp1, taicpu(p).oper[0]^.reg) then
                       RemoveSuperfluousMove(p, hp1, 'DataMov2Data');
                   end;
                 A_CMP:
