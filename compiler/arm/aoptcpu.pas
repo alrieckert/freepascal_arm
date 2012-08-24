@@ -50,6 +50,9 @@ Type
 
     { outputs a debug message into the assembler file }
     procedure DebugMsg(const s: string; p: tai);
+
+  protected
+    function LookForPostindexedPattern(p: taicpu): boolean;
   End;
 
   TCpuPreRegallocScheduler = class(TAsmScheduler)
@@ -349,6 +352,72 @@ Implementation
         end;
     end;
 
+
+  {
+    optimize
+      ldr/str regX,[reg1]
+      ...
+      add/sub reg1,reg1,regY/const
+
+      into
+
+      ldr/str regX,[reg1], regY/const
+  }
+  function TCpuAsmOptimizer.LookForPostindexedPattern(p: taicpu) : boolean;
+    var
+      hp1 : tai;
+    begin
+      Result:=false;
+      if (p.oper[1]^.ref^.addressmode=AM_OFFSET) and
+        (p.oper[1]^.ref^.index=NR_NO) and
+        (p.oper[1]^.ref^.offset=0) and
+        GetNextInstructionUsingReg(p, hp1, p.oper[1]^.ref^.base) and
+        (hp1.typ=ait_instruction) and
+        { we cannot check NR_DEFAULTFLAGS for modification yet so don't allow a condition }
+        (MatchInstruction(hp1, A_ADD, [C_None], [PF_None]) or
+         MatchInstruction(hp1, A_SUB, [C_None], [PF_None])) and
+        (taicpu(hp1).oper[0]^.reg=p.oper[1]^.ref^.base) and
+        (taicpu(hp1).oper[1]^.reg=p.oper[1]^.ref^.base) and
+        (
+         (taicpu(hp1).oper[2]^.typ=top_reg) or
+         { valid offset? }
+         ((taicpu(hp1).oper[2]^.typ=top_const) and
+          ((abs(taicpu(hp1).oper[2]^.val)<256) or
+           ((abs(taicpu(hp1).oper[2]^.val)<4096) and (p.oppostfix in [PF_None,PF_B]))
+          )
+         )
+        ) and
+        { don't apply the optimization if the base register is loaded }
+        (p.oper[0]^.reg<>p.oper[1]^.ref^.base) and
+        not(RegModifiedBetween(taicpu(hp1).oper[0]^.reg,p,hp1)) and
+        { don't apply the optimization if the (new) index register is loaded }
+        (p.oper[0]^.reg<>taicpu(hp1).oper[2]^.reg) and
+        not(RegModifiedBetween(taicpu(hp1).oper[2]^.reg,p,hp1)) then
+        begin
+          DebugMsg('Peephole Str/LdrAdd/Sub2Str/Ldr Postindex done', p);
+          p.oper[1]^.ref^.addressmode:=AM_POSTINDEXED;
+          if taicpu(hp1).oper[2]^.typ=top_const then
+            begin
+              if taicpu(hp1).opcode=A_ADD then
+                p.oper[1]^.ref^.offset:=taicpu(hp1).oper[2]^.val
+              else
+                p.oper[1]^.ref^.offset:=-taicpu(hp1).oper[2]^.val;
+            end
+          else
+            begin
+              p.oper[1]^.ref^.index:=taicpu(hp1).oper[2]^.reg;
+              if taicpu(hp1).opcode=A_ADD then
+                p.oper[1]^.ref^.signindex:=1
+              else
+                p.oper[1]^.ref^.signindex:=-1;
+            end;
+          asml.Remove(hp1);
+          hp1.Free;
+          Result:=true;
+        end;
+    end;
+
+
   function TCpuAsmOptimizer.PeepHoleOptPass1Cpu(var p: tai): boolean;
     var
       hp1,hp2: tai;
@@ -472,6 +541,7 @@ Implementation
                         asml.remove(hp1);
                         hp1.free;
                       end;
+                    LookForPostindexedPattern(taicpu(p));
                   end;
                 A_LDR:
                   begin
@@ -534,6 +604,8 @@ Implementation
                             hp1.free;
                           end;
                       end;
+
+                    LookForPostindexedPattern(taicpu(p));
                     { Remove superfluous mov after ldr
                       changes
                       ldr reg1, ref
