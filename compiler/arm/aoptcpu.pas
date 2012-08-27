@@ -99,22 +99,30 @@ Implementation
         (r1.shiftmode = r2.shiftmode);
     end;
 
-  function MatchInstruction(const instr: tai; const op: TCommonAsmOps; const cond: TAsmConds; const postfix: TOpPostfixes): boolean;
+  function MatchInstruction(const instr: tai; const op: array of TAsmOp; const cond: TAsmConds; const postfix: TOpPostfixes): boolean;
+    var 
+      i : word;
   begin
-    result :=
-      (instr.typ = ait_instruction) and
-      ((op = []) or (taicpu(instr).opcode in op)) and
+    result := false;
+    if (instr.typ = ait_instruction) and
       ((cond = []) or (taicpu(instr).condition in cond)) and
-      ((postfix = []) or (taicpu(instr).oppostfix in postfix));
-  end;
-
-  function MatchInstruction(const instr: tai; const op: TAsmOp; const cond: TAsmConds; const postfix: TOpPostfixes): boolean;
-  begin
-    result :=
-      (instr.typ = ait_instruction) and
-      (taicpu(instr).opcode = op) and
-      ((cond = []) or (taicpu(instr).condition in cond)) and
-      ((postfix = []) or (taicpu(instr).oppostfix in postfix));
+      ((postfix = []) or (taicpu(instr).oppostfix in postfix)) then
+      begin
+        if (length(op) = 0) then
+          begin
+            result := true;
+            exit;
+          end
+        else
+          begin
+            for i := 0 to length(op) - 1 do
+              if taicpu(instr).opcode = op[i] then
+              begin
+                result := true;
+                exit;
+              end;
+          end;
+      end;
   end;
 
   function MatchOperand(const oper1: TOper; const oper2: TOper): boolean; inline;
@@ -1060,13 +1068,13 @@ Implementation
                           { new offset must be valid: either in the range of 8 or 12 bit, depend on the
                             ldr postfix }
                           (((taicpu(p).opcode=A_ADD) and
-                            (((taicpu(hp1).oppostfix in [PF_B]) and
+                            (((taicpu(hp1).oppostfix in [{PF_None,}PF_B]) and
                               (abs(taicpu(hp1).oper[1]^.ref^.offset+taicpu(p).oper[2]^.val)<4096)) or
                              (abs(taicpu(hp1).oper[1]^.ref^.offset+taicpu(p).oper[2]^.val)<256)
                             )
                            ) or
                            ((taicpu(p).opcode=A_SUB) and
-                             (((taicpu(hp1).oppostfix in [PF_B]) and
+                             (((taicpu(hp1).oppostfix in [{PF_None,}PF_B]) and
                                (abs(taicpu(hp1).oper[1]^.ref^.offset-taicpu(p).oper[2]^.val)<4096)) or
                               (abs(taicpu(hp1).oper[1]^.ref^.offset-taicpu(p).oper[2]^.val)<256)
                              )
